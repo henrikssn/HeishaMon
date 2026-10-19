@@ -60,3 +60,27 @@ curl -v -H "Expect:" \
 
 ### Option B: Using the Web Browser UI
 Navigate to `http://192.168.10.12/firmware` in a web browser. Standard browser form submissions do not attach `Expect: 100-continue` and will upload the file cleanly through HeishaMon's native web form handler.
+
+---
+
+## 5. Implemented Firmware & Webserver Safeguards
+
+To prevent this issue from recurring, the following safeguards were implemented:
+
+1. **Firmware Update Inactivity Timeout (`FIRMWARE_UPDATE_TIMEOUT = 30000`)**:
+   - `lastFirmwareUpdateActivity` tracks the last time a firmware chunk was received or initialized.
+   - If `Update.isRunning()` is active and 30 seconds elapse without receiving any data, `loop()` automatically calls `Update.end(false)` to release the update partition lock and log the timeout.
+
+2. **Client Teardown Abort Handler (`WEBSERVER_CLIENT_CLOSE` for Route 150)**:
+   - Added `case 150:` in `HeishaMon.ino` under `WEBSERVER_CLIENT_CLOSE`. If the remote client disconnects or times out mid-transfer, `Update.end(false)` is immediately called.
+   - Fixed `webserver_client_close()` in `webserver.cpp` to set `client->step = WEBSERVER_CLIENT_CLOSE` before invoking callbacks, ensuring cleanup handlers run on unexpected disconnects.
+
+3. **HTTP `Expect: 100-continue` Negotiation**:
+   - In `webserver.cpp`, added detection for the `Expect: 100-continue` header during request parsing.
+   - When the client's HTTP header ends, the web server immediately returns `HTTP/1.1 100 Continue\r\n\r\n`, prompting standard `curl` or automated upload tools to send payload data immediately without waiting for a 60s timeout.
+
+4. **lwIP PCB Leak Protection**:
+   - In `webserver_client_close()` and `webserver_reset_client()`, if `tcp_close()` returns an error (e.g., `ERR_MEM`), `tcp_abort()` is called to guarantee the connection control block is never leaked.
+
+5. **Stale Session Takeover**:
+   - If a new `/firmware` POST request arrives while `Update.isRunning()` is still true from a previously abandoned session, the server gracefully aborts the stale session with `Update.end(false)` and accepts the new upload instead of immediately rejecting it.
