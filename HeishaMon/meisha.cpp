@@ -34,7 +34,7 @@ public:
 extern char actData[DATASIZE];
 extern settingsStruct heishamonSettings;
 extern PubSubClient mqtt_client;
-extern void send_command(byte* command, int length);
+extern bool send_command(byte* command, int length);
 extern void log_message(char* string);
 #else
 #include "../tests/mock_heishamon.h"

@@ -67,16 +67,17 @@ String getDataValue(char* data, unsigned int Topic_Number) {
   return String("");
 }
 
-void send_heatpump_command(char* cmd, char* value, void (*send_cmd)(uint8_t*, int), void (*log_fn)(char*), bool optionalPCB) {
+void send_heatpump_command(char* cmd, char* value, bool (*send_cmd)(uint8_t*, int), void (*log_fn)(char*), bool optionalPCB) {
   (void)send_cmd;
   (void)log_fn;
   (void)optionalPCB;
   g_mock_commands.push_back({cmd ? cmd : "", value ? value : ""});
 }
 
-void send_command(uint8_t* command, int length) {
+bool send_command(uint8_t* command, int length) {
   (void)command;
   (void)length;
+  return true;
 }
 
 void log_message(char* string) {

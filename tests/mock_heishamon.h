@@ -196,9 +196,8 @@ struct tm* mock_localtime(const time_t* timep);
 
 void set_mock_topic_value(unsigned int topic, const char* val);
 String getDataValue(char* data, unsigned int Topic_Number);
-
-void send_heatpump_command(char* cmd, char* value, void (*send_cmd)(uint8_t*, int), void (*log_fn)(char*), bool optionalPCB);
-void send_command(uint8_t* command, int length);
+void send_heatpump_command(char* cmd, char* value, bool (*send_cmd)(uint8_t*, int), void (*log_fn)(char*), bool optionalPCB);
+bool send_command(uint8_t* command, int length);
 void log_message(char* string);
 void mock_corrupt_rtc_state(void);
 void reset_mock_environment(void);
