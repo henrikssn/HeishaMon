@@ -80,6 +80,7 @@ struct MeishaRtcState {
   float degree_hours_target;
   float hours_target;
   float hours_time_left;
+  float pipe_ambient_delta;
   int16_t power_target;
   int16_t reserved_pad;
 
@@ -105,7 +106,22 @@ struct MeishaRtcState {
   uint8_t cool_start_pending;
   uint8_t cool_low_ambient_timer_active;
   uint8_t cool_low_ambient_fired;
-  uint8_t timer_reserved_pad[2];
+  uint8_t fm_off_comp_timer_active;
+  uint8_t fm_off_comp_fired;
+  uint8_t fm_off_delta4_timer_active;
+  uint8_t fm_off_delta4_fired;
+  uint8_t fm_off_delta3_timer_active;
+  uint8_t fm_off_delta3_fired;
+  uint8_t fm_off_outside_timer_active;
+  uint8_t fm_off_outside_fired;
+  uint8_t fm_off_sent;
+  uint8_t defrost_off_timer_active;
+  uint8_t fm_on_comp_timer_active;
+  uint8_t prev_delta_valid;
+  uint8_t fm_on_sent;
+  uint8_t timer_reserved_pad[1];
+
+  float prev_pipe_ambient_delta;
 
   int32_t last_dhw_schedule_day_id;
   int32_t last_cool_start_day_id;
@@ -126,6 +142,12 @@ struct MeishaRtcState {
   uint32_t dhw_end_cool_start_ms;
   uint32_t cool_start_ms;
   uint32_t cool_low_ambient_since_ms;
+  uint32_t fm_off_comp_since_ms;
+  uint32_t fm_off_delta4_since_ms;
+  uint32_t fm_off_delta3_since_ms;
+  uint32_t fm_off_outside_since_ms;
+  uint32_t defrost_off_since_ms;
+  uint32_t fm_on_comp_since_ms;
 
   float change_lock_remaining_min;
   char last_action_reason[32];
@@ -169,6 +191,7 @@ float meisha_get_degree_hours_target(void);
 float meisha_get_dhw_time(void);
 float meisha_get_hours_target(void);
 float meisha_get_hours_time_left(void);
+float meisha_get_pipe_ambient_delta(void);
 bool meisha_get_compressor_running(void);
 float meisha_get_change_lock_remaining_min(void);
 const char *meisha_get_last_action_reason(void);

@@ -139,6 +139,26 @@ static bool parse_hp_on(const String &val) {
           strcasecmp(s, "true") == 0);
 }
 
+static int parse_quiet_mode_level(const String &val) {
+  const char *s = val.c_str();
+  if (!s || s[0] == '\0')
+    return 0;
+  if (strcasecmp(s, "off") == 0)
+    return 0;
+  return val.toInt();
+}
+
+static int parse_defrosting_state(const String &val) {
+  const char *s = val.c_str();
+  if (!s || s[0] == '\0')
+    return 0;
+  if (strcmp(s, "1") == 0 || strcasecmp(s, "on") == 0 ||
+      strcasecmp(s, "true") == 0) {
+    return 1;
+  }
+  return 0;
+}
+
 static uint32_t calculate_crc32(const uint8_t *data, size_t length) {
   uint32_t crc = 0xFFFFFFFF;
   for (size_t i = 0; i < length; i++) {
@@ -315,6 +335,7 @@ static void publish_derived_states(void) {
   publish_sensor_float("dhw_time", rtc_state.dhw_time, 2);
   publish_sensor_float("hours_target", rtc_state.hours_target, 2);
   publish_sensor_float("hours_time_left", rtc_state.hours_time_left, 2);
+  publish_sensor_float("pipe_ambient_delta", rtc_state.pipe_ambient_delta, 1);
   publish_tunable_state("compressor_running",
                         rtc_state.compressor_running ? "ON" : "OFF");
   publish_sensor_float("change_lock_remaining_min",
@@ -637,6 +658,9 @@ void meisha_loop(void) {
   }
 
   float outside_temp = getDataValue(actData, 14).toFloat();
+  float outside_pipe_temp = getDataValue(actData, 21).toFloat();
+  rtc_state.pipe_ambient_delta = round1(outside_temp - outside_pipe_temp);
+
   String room_str = getDataValue(actData, 33);
   float room_temp =
       room_str.length() > 0 ? room_str.toFloat() : s_tunables.room_target;
@@ -662,6 +686,8 @@ void meisha_loop(void) {
   MeishaOpMode op_mode = parse_op_mode(getDataValue(actData, 4));
   String dhw_str = getDataValue(actData, 10);
   float dhw_temp = dhw_str.length() > 0 ? dhw_str.toFloat() : 50.0f;
+  int quiet_mode_level = parse_quiet_mode_level(getDataValue(actData, 18));
+  int defrosting_state = parse_defrosting_state(getDataValue(actData, 26));
 
   int main_outlet_temp_int = (int)main_outlet_temp;
   int main_target_temp_int = (int)main_target_temp;
@@ -1307,6 +1333,128 @@ void meisha_loop(void) {
     }
   }
 
+  // Evaporator-icing protection (Quiet Mode FM Off)
+  // Sets Quiet Mode to 0 (SetQuietMode = 0) whenever quiet_mode_level != 0,
+  // (pipe_ambient_delta > 4.0 or (pipe_ambient_delta > 3.0 and outside_temp
+  // < 1.1)), and any trigger duration holds (compressor_freq > 25.0 Hz for 1
+  // min, pipe_ambient_delta > 4.0 K for 5 min, pipe_ambient_delta > 3.0 K for 5
+  // min, or outside_temp < 1.1 C for 5 min).
+  bool fm_off_state_cond =
+      (quiet_mode_level != 0) &&
+      ((rtc_state.pipe_ambient_delta > 4.0f) ||
+       (rtc_state.pipe_ambient_delta > 3.0f && outside_temp < 1.1f));
+
+  if (quiet_mode_level != 0 && compressor_freq > 25.0f) {
+    if (!rtc_state.fm_off_comp_timer_active) {
+      rtc_state.fm_off_comp_timer_active = 1;
+      rtc_state.fm_off_comp_since_ms = now_ms;
+    }
+  } else {
+    rtc_state.fm_off_comp_timer_active = 0;
+  }
+  bool fm_comp_1m = rtc_state.fm_off_comp_timer_active &&
+                    ((now_ms - rtc_state.fm_off_comp_since_ms) >= 60000UL);
+
+  if (quiet_mode_level != 0 && rtc_state.pipe_ambient_delta > 4.0f) {
+    if (!rtc_state.fm_off_delta4_timer_active) {
+      rtc_state.fm_off_delta4_timer_active = 1;
+      rtc_state.fm_off_delta4_since_ms = now_ms;
+    }
+  } else {
+    rtc_state.fm_off_delta4_timer_active = 0;
+  }
+  bool fm_delta4_5m = rtc_state.fm_off_delta4_timer_active &&
+                      ((now_ms - rtc_state.fm_off_delta4_since_ms) >= 300000UL);
+
+  if (quiet_mode_level != 0 && rtc_state.pipe_ambient_delta > 3.0f) {
+    if (!rtc_state.fm_off_delta3_timer_active) {
+      rtc_state.fm_off_delta3_timer_active = 1;
+      rtc_state.fm_off_delta3_since_ms = now_ms;
+    }
+  } else {
+    rtc_state.fm_off_delta3_timer_active = 0;
+  }
+  bool fm_delta3_5m = rtc_state.fm_off_delta3_timer_active &&
+                      ((now_ms - rtc_state.fm_off_delta3_since_ms) >= 300000UL);
+
+  if (quiet_mode_level != 0 && outside_temp < 1.1f) {
+    if (!rtc_state.fm_off_outside_timer_active) {
+      rtc_state.fm_off_outside_timer_active = 1;
+      rtc_state.fm_off_outside_since_ms = now_ms;
+    }
+  } else {
+    rtc_state.fm_off_outside_timer_active = 0;
+  }
+  bool fm_outside_5m =
+      rtc_state.fm_off_outside_timer_active &&
+      ((now_ms - rtc_state.fm_off_outside_since_ms) >= 300000UL);
+
+  bool fm_off_trigger =
+      fm_comp_1m || fm_delta4_5m || fm_delta3_5m || fm_outside_5m;
+
+  if (fm_off_state_cond && fm_off_trigger) {
+    if (!rtc_state.fm_off_sent) {
+      meisha_send_command("SetQuietMode", "0");
+      rtc_state.fm_off_sent = 1;
+      set_last_action_reason("fm_off");
+      publish_derived_states();
+    }
+  } else if (!fm_off_state_cond) {
+    rtc_state.fm_off_sent = 0;
+  }
+
+  // Quiet Mode Recovery (FM On)
+  // Sets Quiet Mode to 1 (SetQuietMode = 1) whenever quiet_mode_level == 0,
+  // 1.0 < compressor_freq < 23.5 Hz, defrosting_state == 0 continuously for 2
+  // hours, pipe_ambient_delta < 3.1 K, (pipe_ambient_delta < 2.1 K or
+  // outside_temp > 1.0 C), and either (1.0 < compressor_freq < 23.5 Hz for 1
+  // min) or (pipe_ambient_delta drops below 4.0 K).
+  if (defrosting_state == 0) {
+    if (!rtc_state.defrost_off_timer_active) {
+      rtc_state.defrost_off_timer_active = 1;
+      rtc_state.defrost_off_since_ms = now_ms;
+    }
+  } else {
+    rtc_state.defrost_off_timer_active = 0;
+  }
+  bool defrosted_2h = rtc_state.defrost_off_timer_active &&
+                      ((now_ms - rtc_state.defrost_off_since_ms) >= 7200000UL);
+
+  bool comp_light_load = (compressor_freq > 1.0f && compressor_freq < 23.5f);
+  if (comp_light_load) {
+    if (!rtc_state.fm_on_comp_timer_active) {
+      rtc_state.fm_on_comp_timer_active = 1;
+      rtc_state.fm_on_comp_since_ms = now_ms;
+    }
+  } else {
+    rtc_state.fm_on_comp_timer_active = 0;
+  }
+  bool comp_light_1m = rtc_state.fm_on_comp_timer_active &&
+                       ((now_ms - rtc_state.fm_on_comp_since_ms) >= 60000UL);
+
+  bool delta_dropped_below_4 = rtc_state.prev_delta_valid &&
+                               (rtc_state.prev_pipe_ambient_delta >= 4.0f) &&
+                               (rtc_state.pipe_ambient_delta < 4.0f);
+
+  bool fm_on_state_cond =
+      (quiet_mode_level == 0) && comp_light_load && defrosted_2h &&
+      (rtc_state.pipe_ambient_delta < 3.1f) &&
+      ((rtc_state.pipe_ambient_delta < 2.1f) || (outside_temp > 1.0f));
+
+  if (fm_on_state_cond && (comp_light_1m || delta_dropped_below_4)) {
+    if (!rtc_state.fm_on_sent) {
+      meisha_send_command("SetQuietMode", "1");
+      rtc_state.fm_on_sent = 1;
+      set_last_action_reason("fm_on");
+      publish_derived_states();
+    }
+  } else if (!fm_on_state_cond) {
+    rtc_state.fm_on_sent = 0;
+  }
+
+  rtc_state.prev_pipe_ambient_delta = rtc_state.pipe_ambient_delta;
+  rtc_state.prev_delta_valid = 1;
+
   rtc_state.crc32 = rtc_crc(&rtc_state);
 
   // 2-hour periodic NVS checkpoint while heat pump is running (TOP0 == 1)
@@ -1418,6 +1566,10 @@ float meisha_get_dhw_time(void) { return rtc_state.dhw_time; }
 float meisha_get_hours_target(void) { return rtc_state.hours_target; }
 
 float meisha_get_hours_time_left(void) { return rtc_state.hours_time_left; }
+
+float meisha_get_pipe_ambient_delta(void) {
+  return rtc_state.pipe_ambient_delta;
+}
 
 bool meisha_get_compressor_running(void) {
   return rtc_state.compressor_running != 0;
