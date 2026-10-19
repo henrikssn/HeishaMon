@@ -7,6 +7,8 @@
 #include <map>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 
 #define MOCK_HEISHAMON 1
 #define DATASIZE 203
@@ -41,6 +43,33 @@ struct MockCommandCall {
   std::string value;
 };
 
+class String {
+public:
+  std::string str;
+
+  String() : str("") {}
+  String(const char* s) : str(s ? s : "") {}
+  String(const std::string& s) : str(s) {}
+
+  float toFloat() const {
+    if (str.empty()) return 0.0f;
+    return std::strtof(str.c_str(), nullptr);
+  }
+
+  int toInt() const {
+    if (str.empty()) return 0;
+    return std::atoi(str.c_str());
+  }
+
+  const char* c_str() const {
+    return str.c_str();
+  }
+
+  size_t length() const {
+    return str.length();
+  }
+};
+
 class PubSubClient {
 public:
   std::vector<std::string> subscriptions;
@@ -64,7 +93,7 @@ public:
 
 class Preferences {
 public:
-  static std::map<std::string, std::map<std::string, uint8_t>> storage;
+  static std::map<std::string, std::map<std::string, std::vector<uint8_t>>> storage;
   static std::map<std::string, int> write_counts;
 
   std::string ns;
@@ -79,15 +108,66 @@ public:
 
   uint8_t getUChar(const char* key, uint8_t defaultValue = 0) {
     if (storage.find(ns) != storage.end() && storage[ns].find(key) != storage[ns].end()) {
-      return storage[ns][key];
+      if (storage[ns][key].size() >= sizeof(uint8_t)) {
+        return storage[ns][key][0];
+      }
     }
     return defaultValue;
   }
 
   size_t putUChar(const char* key, uint8_t value) {
     write_counts[ns + "/" + key]++;
-    storage[ns][key] = value;
+    storage[ns][key] = {value};
     return 1;
+  }
+
+  float getFloat(const char* key, float defaultValue = 0.0f) {
+    if (storage.find(ns) != storage.end() && storage[ns].find(key) != storage[ns].end()) {
+      if (storage[ns][key].size() >= sizeof(float)) {
+        float val;
+        memcpy(&val, storage[ns][key].data(), sizeof(float));
+        return val;
+      }
+    }
+    return defaultValue;
+  }
+
+  size_t putFloat(const char* key, float value) {
+    write_counts[ns + "/" + key]++;
+    std::vector<uint8_t> buf(sizeof(float));
+    memcpy(buf.data(), &value, sizeof(float));
+    storage[ns][key] = buf;
+    return sizeof(float);
+  }
+
+  bool getBool(const char* key, bool defaultValue = false) {
+    return getUChar(key, defaultValue ? 1 : 0) != 0;
+  }
+
+  size_t putBool(const char* key, bool value) {
+    return putUChar(key, value ? 1 : 0);
+  }
+
+  size_t getBytes(const char* key, void* buf, size_t maxLen) {
+    if (storage.find(ns) != storage.end() && storage[ns].find(key) != storage[ns].end()) {
+      size_t len = storage[ns][key].size();
+      if (len > maxLen) len = maxLen;
+      if (len > 0) {
+        memcpy(buf, storage[ns][key].data(), len);
+        return len;
+      }
+    }
+    return 0;
+  }
+
+  size_t putBytes(const char* key, const void* value, size_t len) {
+    write_counts[ns + "/" + key]++;
+    std::vector<uint8_t> buf(len);
+    if (len > 0) {
+      memcpy(buf.data(), value, len);
+    }
+    storage[ns][key] = buf;
+    return len;
   }
 
   static void reset() {
@@ -109,7 +189,16 @@ void set_mock_millis(uint32_t ms);
 void advance_mock_millis(uint32_t ms);
 uint32_t millis(void);
 
+void set_mock_time(time_t t);
+void advance_mock_time(time_t t);
+time_t mock_time(time_t* tloc);
+struct tm* mock_localtime(const time_t* timep);
+
+void set_mock_topic_value(unsigned int topic, const char* val);
+String getDataValue(char* data, unsigned int Topic_Number);
+
 void send_heatpump_command(char* cmd, char* value, void (*send_cmd)(uint8_t*, int), void (*log_fn)(char*), bool optionalPCB);
 void send_command(uint8_t* command, int length);
 void log_message(char* string);
+void mock_corrupt_rtc_state(void);
 void reset_mock_environment(void);

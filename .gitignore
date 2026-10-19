@@ -20,6 +20,8 @@ firmware.asm
 *.so
 test_runner
 tests/test_runner
+test_ticket_*
+tests/test_ticket_*
 
 # Build output directories and binaries
 build/

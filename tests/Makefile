@@ -1,22 +1,25 @@
 CXX ?= g++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -I../HeishaMon -I. -O2
 
-SRCS = test_ticket_01.cpp mock_heishamon.cpp ../HeishaMon/meisha.cpp
-OBJS = $(SRCS:.cpp=.o)
-TARGET = test_runner
+COMMON_OBJS = mock_heishamon.o ../HeishaMon/meisha.o
+TARGETS = test_ticket_01 test_ticket_02
 
-all: $(TARGET)
+all: $(TARGETS)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+test_ticket_01: test_ticket_01.o $(COMMON_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+test_ticket_02: test_ticket_02.o $(COMMON_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-test: $(TARGET)
-	./$(TARGET)
+test: $(TARGETS)
+	./test_ticket_01
+	./test_ticket_02
 
 clean:
-	rm -f $(TARGET) test_ticket_01.o mock_heishamon.o ../HeishaMon/meisha.o
+	rm -f $(TARGETS) test_runner *.o ../HeishaMon/meisha.o
 
 .PHONY: all test clean

@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifndef MEISHA_ENTITY_PREFIX
 #define MEISHA_ENTITY_PREFIX "meisha_esp_"
@@ -9,18 +10,70 @@
 
 #define MEISHA_RTC_MAGIC 0x4D454953 // "MEIS"
 
+#define MEISHA_AMBIENT_1H_SAMPLES 60
+#define MEISHA_AMBIENT_24H_SAMPLES 288
+#define MEISHA_ROOM_6H_SAMPLES 360
+
 enum MeishaControlMode : uint8_t {
   MEISHA_MODE_OFF = 0,
   MEISHA_MODE_SHADOW = 1,
   MEISHA_MODE_ACTIVE = 2
 };
 
+struct MeishaTunables {
+  float room_target;          // 18.0..25.0, default 23.0
+  float heating_curve_start;  // 12.0..20.0, default 14.0
+  float heating_curve_angle;  // 0.2..1.5, default 0.8
+  uint8_t heating_start_hour; // 0..23, default 9
+  bool cooling_mode;          // false=off, true=on
+};
+
+// Exact 32-byte scalar checkpoint struct written to NVS
+struct MeishaNvsCheckpoint {
+  float ambient_24h_mean;
+  float ambient_1h_mean;
+  float room_temp_6h_mean;
+  float room_temp_snapshot;
+  float degree_hours_day;
+  float dhw_time;
+  float pid_output;
+  uint32_t saved_at_epoch;
+};
+
+#if defined(__cplusplus)
+static_assert(sizeof(MeishaNvsCheckpoint) == 32, "MeishaNvsCheckpoint must be exactly 32 bytes");
+#endif
+
 struct MeishaRtcState {
   uint32_t magic;
   uint16_t version;
   uint16_t crash_count;
   uint8_t crash_tripped;
-  uint8_t reserved[23];
+  uint8_t seeded;
+  uint8_t ambient_24h_sub_ticks;
+  uint8_t reserved_flags;
+  int32_t last_reset_heating_day_id;
+
+  uint16_t ambient_1h_head;
+  uint16_t ambient_1h_count;
+  int16_t ambient_1h_buf[MEISHA_AMBIENT_1H_SAMPLES];
+
+  uint16_t ambient_24h_head;
+  uint16_t ambient_24h_count;
+  int16_t ambient_24h_buf[MEISHA_AMBIENT_24H_SAMPLES];
+
+  uint16_t room_6h_head;
+  uint16_t room_6h_count;
+  int16_t room_6h_buf[MEISHA_ROOM_6H_SAMPLES];
+
+  float ambient_1h_mean;
+  float ambient_24h_mean;
+  float room_temp_6h_mean;
+  float room_temp_snapshot;
+  float degree_hours_day;
+  float dhw_time;
+  float pid_output;
+
   uint32_t crc32;
 };
 
@@ -37,6 +90,18 @@ MeishaControlMode meisha_get_control_mode(void);
 void meisha_set_control_mode(MeishaControlMode mode);
 bool meisha_send_command(const char* cmd, const char* value);
 const MeishaRtcState* meisha_get_rtc_state(void);
+
+MeishaTunables meisha_get_tunables(void);
+bool meisha_set_room_target(float val);
+bool meisha_set_heating_curve_start(float val);
+bool meisha_set_heating_curve_angle(float val);
+bool meisha_set_heating_start_hour(uint8_t val);
+bool meisha_set_cooling_mode(bool val);
+
+float meisha_get_ambient_1h(void);
+float meisha_get_ambient_24h(void);
+float meisha_get_room_temp_6h(void);
+float meisha_get_room_temp_snapshot(void);
 
 #ifdef __cplusplus
 }
