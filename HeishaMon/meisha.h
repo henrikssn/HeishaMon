@@ -82,6 +82,25 @@ struct MeishaRtcState {
   int16_t power_target;
   int16_t reserved_pad;
 
+  // Duration & sequence timers (ms)
+  uint8_t valve_room_timer_active;
+  uint8_t comp_on_timer_active;
+  uint8_t overshoot_timer_active;
+  uint8_t overshoot_steps_fired;
+  uint8_t change_lock_active;
+  uint8_t day_mode_pending;
+  uint16_t timer_reserved_pad;
+
+  uint32_t valve_room_since_ms;
+  uint32_t comp_on_since_ms;
+  uint32_t overshoot_start_ms;
+  uint32_t change_lock_set_ms;
+  uint32_t change_lock_duration_ms;
+  uint32_t day_mode_start_ms;
+
+  float change_lock_remaining_min;
+  char last_action_reason[32];
+
   uint32_t crc32;
 };
 
@@ -121,6 +140,8 @@ float meisha_get_dhw_time(void);
 float meisha_get_hours_target(void);
 float meisha_get_hours_time_left(void);
 bool meisha_get_compressor_running(void);
+float meisha_get_change_lock_remaining_min(void);
+const char* meisha_get_last_action_reason(void);
 
 #ifdef __cplusplus
 }

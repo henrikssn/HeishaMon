@@ -44,8 +44,10 @@ static const MeishaSensorDiscovery kMeishaSensors[] = {
   {"sensor",        "degree_hours_target", "Meisha Degree Hours Target", "Kh",  NULL},
   {"sensor",        "dhw_time",            "Meisha DHW Time",            "h",   NULL},
   {"sensor",        "hours_target",        "Meisha Hours Target",        "h",   NULL},
-  {"sensor",        "hours_time_left",     "Meisha Hours Time Left",     "h",   NULL},
-  {"binary_sensor", "compressor_running",  "Meisha Compressor Running",  NULL,  "running"},
+  {"sensor",        "hours_time_left",           "Meisha Hours Time Left",           "h",   NULL},
+  {"binary_sensor", "compressor_running",        "Meisha Compressor Running",        NULL,  "running"},
+  {"sensor",        "change_lock_remaining_min", "Meisha Change Lock Remaining Min", "min", "duration"},
+  {"sensor",        "last_action_reason",        "Meisha Last Action Reason",        NULL,  NULL},
 };
 
 template <typename MqttClientType>
