@@ -59,3 +59,10 @@ _Avoid_: Night setback, budget-reached mode
 **Shadow Mode**:
 An observation-only operating mode where the on-device controller computes all averages, targets, budgets, and proposed heat pump commands and publishes them to MQTT without actuating the heat pump.
 _Avoid_: Dry-run mode, test mode, passive mode
+
+### State & Lifecycle
+
+**Live Seeding**:
+The cold-start initialization process that populates the rolling-average ring buffers from the first valid live heat pump telemetry frame, establishing a verified baseline before derived metrics and rolling averages are published.
+_Avoid_: Cold initialization, zero fill, boot priming
+
