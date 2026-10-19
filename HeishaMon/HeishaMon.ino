@@ -93,6 +93,8 @@ unsigned long toolongread = 0;
 unsigned long timeoutread = 0;
 float readpercentage = 0;
 static int uploadpercentage = 0;
+#define FIRMWARE_UPDATE_TIMEOUT 30000 // 30 seconds of inactivity timeout during firmware upload
+static unsigned long lastFirmwareUpdateActivity = 0;
 
 // instead of passing array pointers between functions we just define this in the global scope
 #define MAXDATASIZE 255
@@ -1145,20 +1147,19 @@ int8_t webserver_cb(struct webserver_t *client, void *dat) {
           }
 #endif
           } else if (strcmp_P((char *)dat, PSTR("/firmware")) == 0) {
-            if (!Update.isRunning()) {
+            if (Update.isRunning()) {
+              log_message(_F("Firmware update already in progress; aborting previous update session"));
+              Update.end(false);
+            }
 #ifdef ESP8266
-              Update.runAsync(true);
+            Update.runAsync(true);
 #endif
-              if (!Update.begin((ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000)) {
-                Update.printError(loggingSerial);
-                return -1;
-              } else {
-                client->route = 150;
-              }
-            } else {
-              loggingSerial.println(PSTR("New firmware update client, while previous isn't finished yet! Assume broken connection, abort!"));
-              Update.end();
+            if (!Update.begin((ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000)) {
+              Update.printError(loggingSerial);
               return -1;
+            } else {
+              client->route = 150;
+              lastFirmwareUpdateActivity = millis();
             }
           } else {
             return -1;
@@ -1251,6 +1252,7 @@ int8_t webserver_cb(struct webserver_t *client, void *dat) {
               return cacheSettings(client, args);
             } break;
           case 150: {
+              lastFirmwareUpdateActivity = millis();
               if (Update.isRunning() && (!Update.hasError())) {
                 if ((strcmp((char *)args->name, "md5") == 0) && (args->len > 0)) {
                   char md5[args->len + 1];
@@ -1519,6 +1521,12 @@ int8_t webserver_cb(struct webserver_t *client, void *dat) {
                 tmp = (struct websettings_t *)client->userdata;
                 client->userdata = ((struct websettings_t *)(client->userdata))->next;
                 free(tmp);
+              }
+            } break;
+          case 150: {
+              if (Update.isRunning()) {
+                log_message(_F("Firmware update client connection closed, aborting Update"));
+                Update.end(false);
               }
             } break;
           case 160:
@@ -2021,6 +2029,12 @@ void loop() {
 
   //webserver function
   webserver_loop();
+
+  // Timeout stuck or abandoned firmware updates
+  if (Update.isRunning() && ((unsigned long)(millis() - lastFirmwareUpdateActivity) > FIRMWARE_UPDATE_TIMEOUT)) {
+    log_message(_F("Firmware update timed out after 30s of inactivity, aborting Update"));
+    Update.end(false);
+  }
 
   // check wifi
   check_wifi();

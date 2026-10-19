@@ -120,6 +120,7 @@ typedef struct webserver_t {
   uint8_t chunked:4;
   uint8_t step:4;
   uint8_t substep:4;
+  uint8_t expect_continue:1;
   uint16_t ptr;
   uint32_t totallen;
   uint32_t readlen;

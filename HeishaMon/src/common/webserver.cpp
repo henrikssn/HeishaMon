@@ -774,6 +774,11 @@ int8_t http_parse_request(struct webserver_t *client, uint8_t **buf, uint16_t *l
                 }
               }
             }
+            if(memcmp_P(args.name, PSTR("Expect"), 6) == 0) {
+              if(strncasestr(&client->buffer[x+1], "100-continue", client->ptr-(x+1)) != NULL) {
+                client->expect_continue = 1;
+              }
+            }
             client->step = WEBSERVER_CLIENT_HEADER;
             if(client->callback != NULL) {
               if(client->callback(client, &args) == -1) {
@@ -809,6 +814,17 @@ int8_t http_parse_request(struct webserver_t *client, uint8_t **buf, uint16_t *l
         memmove(&client->buffer[0], &client->buffer[2], client->ptr-2);
         client->ptr -= 2;
         client->readlen = 0;
+        if(client->expect_continue == 1) {
+          client->expect_continue = 0;
+#if defined(ESP8266) || defined(ESP32)
+          if(client->async == 1) {
+            tcp_write_P(client->pcb, (char *)PSTR("HTTP/1.1 100 Continue\r\n\r\n"), 25, TCP_WRITE_FLAG_COPY);
+            tcp_output(client->pcb);
+          } else {
+            safe_write_P(client, (char *)PSTR("HTTP/1.1 100 Continue\r\n\r\n"), 25);
+          }
+#endif
+        }
         if(client->ptr == 0 && *len > 0) {
           client->substep = 5;
           continue;
@@ -1899,6 +1915,7 @@ done:
 
 /* LCOV_EXCL_START*/
 static void webserver_client_close(struct webserver_t *client) {
+  client->step = WEBSERVER_CLIENT_CLOSE;
   if(client->callback != NULL) {
     client->callback(client, NULL);
   }
@@ -1920,7 +1937,9 @@ static void webserver_client_close(struct webserver_t *client) {
   tcp_sent(client->pcb, NULL);
   tcp_poll(client->pcb, NULL, 0);
 
-  tcp_close(client->pcb);
+  if(tcp_close(client->pcb) != ERR_OK) {
+    tcp_abort(client->pcb);
+  }
   client->pcb = NULL;
 
   webserver_reset_client(client);
@@ -2273,7 +2292,9 @@ err_t webserver_poll(void *arg, struct tcp_pcb *pcb) {
 void webserver_reset_client(struct webserver_t *client) {
 #if defined(ESP8266) || defined(ESP32)
   if(client->pcb != NULL) {
-    tcp_close(client->pcb);
+    if(tcp_close(client->pcb) != ERR_OK) {
+      tcp_abort(client->pcb);
+    }
     client->pcb = NULL;
   }
   if(client->client != NULL) {
@@ -2293,6 +2314,7 @@ void webserver_reset_client(struct webserver_t *client) {
   client->chunked = 0;
   client->ptr = 0;
   client->route = 0;
+  client->expect_continue = 0;
   client->lastseen = 0;
   client->lastping = 0;
   client->content = 0;
