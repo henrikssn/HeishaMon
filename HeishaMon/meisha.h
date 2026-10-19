@@ -51,7 +51,7 @@ struct MeishaRtcState {
   uint8_t crash_tripped;
   uint8_t seeded;
   uint8_t ambient_24h_sub_ticks;
-  uint8_t reserved_flags;
+  uint8_t compressor_running;
   int32_t last_reset_heating_day_id;
 
   uint16_t ambient_1h_head;
@@ -73,6 +73,14 @@ struct MeishaRtcState {
   float degree_hours_day;
   float dhw_time;
   float pid_output;
+
+  float curve_target;
+  float room_delta;
+  float degree_hours_target;
+  float hours_target;
+  float hours_time_left;
+  int16_t power_target;
+  int16_t reserved_pad;
 
   uint32_t crc32;
 };
@@ -102,6 +110,17 @@ float meisha_get_ambient_1h(void);
 float meisha_get_ambient_24h(void);
 float meisha_get_room_temp_6h(void);
 float meisha_get_room_temp_snapshot(void);
+
+float meisha_get_curve_target(void);
+float meisha_get_pid_output(void);
+int meisha_get_power_target(void);
+float meisha_get_room_delta(void);
+float meisha_get_degree_hours_day(void);
+float meisha_get_degree_hours_target(void);
+float meisha_get_dhw_time(void);
+float meisha_get_hours_target(void);
+float meisha_get_hours_time_left(void);
+bool meisha_get_compressor_running(void);
 
 #ifdef __cplusplus
 }

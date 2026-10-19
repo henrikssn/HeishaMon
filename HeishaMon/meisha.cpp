@@ -41,6 +41,7 @@ extern void log_message(char* string);
 #define time mock_time
 #define localtime mock_localtime
 #endif
+#include "meisha_discovery.h"
 
 #ifdef ESP32
 RTC_NOINIT_ATTR static MeishaRtcState rtc_state;
@@ -61,6 +62,38 @@ static Preferences s_prefs;
 static bool s_prefs_opened = false;
 static uint32_t s_last_sample_ms = 0;
 static uint32_t s_last_checkpoint_ms = 0;
+static uint32_t s_last_integral_ms = 0;
+static uint32_t s_last_pid_ms = 0;
+static bool s_sampled_once = false;
+static bool s_checkpoint_started = false;
+static bool s_integral_started = false;
+static bool s_pid_started = false;
+
+static inline float round1(float val) {
+  return roundf(val * 10.0f) / 10.0f;
+}
+
+static inline float round2(float val) {
+  return roundf(val * 100.0f) / 100.0f;
+}
+
+static inline float clampf(float val, float min_val, float max_val) {
+  return (val < min_val) ? min_val : ((val > max_val) ? max_val : val);
+}
+
+enum MeishaValveState : uint8_t {
+  MEISHA_VALVE_ROOM = 0,
+  MEISHA_VALVE_TANK = 1
+};
+
+static MeishaValveState parse_valve_state(const String& val_str) {
+  const char* s = val_str.c_str();
+  if (!s || s[0] == '\0') return MEISHA_VALVE_ROOM;
+  if (strcasecmp(s, "1") == 0 || strcasecmp(s, "tank") == 0 || strcasecmp(s, "dhw") == 0) {
+    return MEISHA_VALVE_TANK;
+  }
+  return MEISHA_VALVE_ROOM;
+}
 
 static uint32_t calculate_crc32(const uint8_t* data, size_t length) {
   uint32_t crc = 0xFFFFFFFF;
@@ -167,182 +200,29 @@ static void publish_rolling_average_states(void) {
   publish_sensor_float("room_temp_snapshot", rtc_state.room_temp_snapshot, 1);
 }
 
+static void publish_sensor_int(const char* name, int val) {
+  char topic[256];
+  snprintf(topic, sizeof(topic), "%s/meisha/state/%s", heishamonSettings.mqtt_topic_base, name);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%d", val);
+  mqtt_client.publish(topic, buf, true);
+}
+
+static void publish_derived_states(void) {
+  publish_sensor_float("curve_target", rtc_state.curve_target, 2);
+  publish_sensor_float("pid_output", rtc_state.pid_output, 4);
+  publish_sensor_int("power_target", rtc_state.power_target);
+  publish_sensor_float("room_delta", rtc_state.room_delta, 2);
+  publish_sensor_float("degree_hours_day", rtc_state.degree_hours_day, 2);
+  publish_sensor_float("degree_hours_target", rtc_state.degree_hours_target, 2);
+  publish_sensor_float("dhw_time", rtc_state.dhw_time, 2);
+  publish_sensor_float("hours_target", rtc_state.hours_target, 2);
+  publish_sensor_float("hours_time_left", rtc_state.hours_time_left, 2);
+  publish_tunable_state("compressor_running", rtc_state.compressor_running ? "ON" : "OFF");
+}
+
 static void publish_ha_discovery(void) {
-  char disc_topic[160];
-  char payload[1024];
-
-  // 1. Mode select
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/select/%scontrol_mode/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha ESP Control Mode\","
-      "\"unique_id\":\"%scontrol_mode\","
-      "\"object_id\":\"%scontrol_mode\","
-      "\"command_topic\":\"%s/meisha/set/control_mode\","
-      "\"state_topic\":\"%s/meisha/state/control_mode\","
-      "\"availability_topic\":\"%s/%s\","
-      "\"payload_available\":\"Online\","
-      "\"payload_not_available\":\"Offline\","
-      "\"options\":[\"Off\",\"Shadow\",\"Active\"],"
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"],\"name\":\"Meisha Heat Pump Controller\",\"model\":\"HeishaMon Large ESP32-S3\",\"manufacturer\":\"Custom\"}"
-    "}",
-    MEISHA_ENTITY_PREFIX,
-    MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base,
-    heishamonSettings.mqtt_topic_base,
-    heishamonSettings.mqtt_topic_base,
-    mqtt_willtopic
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 2. room_target (18..25, step 0.5)
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/number/%sroom_target/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Room Target\","
-      "\"unique_id\":\"%sroom_target\","
-      "\"object_id\":\"%sroom_target\","
-      "\"command_topic\":\"%s/meisha/set/room_target\","
-      "\"state_topic\":\"%s/meisha/state/room_target\","
-      "\"min\":18.0,\"max\":25.0,\"step\":0.5,\"unit_of_measurement\":\"°C\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base, heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 3. heating_curve_start (12..20, step 1.0)
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/number/%sheating_curve_start/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Heating Curve Start\","
-      "\"unique_id\":\"%sheating_curve_start\","
-      "\"object_id\":\"%sheating_curve_start\","
-      "\"command_topic\":\"%s/meisha/set/heating_curve_start\","
-      "\"state_topic\":\"%s/meisha/state/heating_curve_start\","
-      "\"min\":12.0,\"max\":20.0,\"step\":1.0,\"unit_of_measurement\":\"°C\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base, heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 4. heating_curve_angle (0.2..1.5, step 0.1)
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/number/%sheating_curve_angle/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Heating Curve Angle\","
-      "\"unique_id\":\"%sheating_curve_angle\","
-      "\"object_id\":\"%sheating_curve_angle\","
-      "\"command_topic\":\"%s/meisha/set/heating_curve_angle\","
-      "\"state_topic\":\"%s/meisha/state/heating_curve_angle\","
-      "\"min\":0.2,\"max\":1.5,\"step\":0.1,"
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base, heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 5. heating_start_hour (0..23, step 1)
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/number/%sheating_start_hour/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Heating Start Hour\","
-      "\"unique_id\":\"%sheating_start_hour\","
-      "\"object_id\":\"%sheating_start_hour\","
-      "\"command_topic\":\"%s/meisha/set/heating_start_hour\","
-      "\"state_topic\":\"%s/meisha/state/heating_start_hour\","
-      "\"min\":0,\"max\":23,\"step\":1,\"unit_of_measurement\":\"h\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base, heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 6. cooling_mode switch
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/switch/%scooling_mode/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Cooling Mode\","
-      "\"unique_id\":\"%scooling_mode\","
-      "\"object_id\":\"%scooling_mode\","
-      "\"command_topic\":\"%s/meisha/set/cooling_mode\","
-      "\"state_topic\":\"%s/meisha/state/cooling_mode\","
-      "\"payload_on\":\"ON\",\"payload_off\":\"OFF\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base, heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 7. ambient_1h sensor
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/sensor/%sambient_1h/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Ambient 1h\","
-      "\"unique_id\":\"%sambient_1h\","
-      "\"object_id\":\"%sambient_1h\","
-      "\"state_topic\":\"%s/meisha/state/ambient_1h\","
-      "\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 8. ambient_24h sensor
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/sensor/%sambient_24h/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Ambient 24h\","
-      "\"unique_id\":\"%sambient_24h\","
-      "\"object_id\":\"%sambient_24h\","
-      "\"state_topic\":\"%s/meisha/state/ambient_24h\","
-      "\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 9. room_temp_6h sensor
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/sensor/%sroom_temp_6h/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Room Temp 6h\","
-      "\"unique_id\":\"%sroom_temp_6h\","
-      "\"object_id\":\"%sroom_temp_6h\","
-      "\"state_topic\":\"%s/meisha/state/room_temp_6h\","
-      "\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
-
-  // 10. room_temp_snapshot sensor
-  snprintf(disc_topic, sizeof(disc_topic), "homeassistant/sensor/%sroom_temp_snapshot/config", MEISHA_ENTITY_PREFIX);
-  snprintf(payload, sizeof(payload),
-    "{"
-      "\"name\":\"Meisha Room Temp Snapshot\","
-      "\"unique_id\":\"%sroom_temp_snapshot\","
-      "\"object_id\":\"%sroom_temp_snapshot\","
-      "\"state_topic\":\"%s/meisha/state/room_temp_snapshot\","
-      "\"unit_of_measurement\":\"°C\",\"device_class\":\"temperature\","
-      "\"device\":{\"identifiers\":[\"meisha_esp_controller\"]}"
-    "}",
-    MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX,
-    heishamonSettings.mqtt_topic_base
-  );
-  mqtt_client.publish(disc_topic, payload, true);
+  meisha_publish_discovery_table(mqtt_client, heishamonSettings.mqtt_topic_base, mqtt_willtopic);
 }
 
 static void fill_ring_buffer(int16_t* buf, uint16_t capacity, uint16_t* head, uint16_t* count, float val) {
@@ -582,6 +462,15 @@ void meisha_setup(void) {
     }
   }
 
+  s_sampled_once = false;
+  s_checkpoint_started = false;
+  s_integral_started = false;
+  s_pid_started = false;
+  s_last_sample_ms = 0;
+  s_last_checkpoint_ms = 0;
+  s_last_integral_ms = 0;
+  s_last_pid_ms = 0;
+
   uint8_t stored_mode = s_prefs.getUChar("ctrl_mode", (uint8_t)MEISHA_MODE_SHADOW);
   if (stored_mode <= (uint8_t)MEISHA_MODE_ACTIVE) {
     s_control_mode = (MeishaControlMode)stored_mode;
@@ -614,6 +503,20 @@ void meisha_loop(void) {
     room_temp = s_tunables.room_target;
   }
 
+  float pump_flow = getDataValue(actData, 1).toFloat();
+  float main_outlet_temp = getDataValue(actData, 6).toFloat();
+  float compressor_freq = getDataValue(actData, 8).toFloat();
+  MeishaValveState valve_state = parse_valve_state(getDataValue(actData, 20));
+
+  // Compressor running hysteresis (10 Hz upper threshold, 2 Hz hysteresis: >12 Hz on, <8 Hz off)
+  if (compressor_freq > 12.0f) {
+    rtc_state.compressor_running = 1;
+  } else if (compressor_freq < 8.0f) {
+    rtc_state.compressor_running = 0;
+  }
+
+  uint32_t now_ms = millis();
+
   // Live seeding on cold start
   if (rtc_state.seeded == 0) {
     fill_ring_buffer(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
@@ -626,17 +529,36 @@ void meisha_loop(void) {
     rtc_state.ambient_1h_mean = outside_temp;
     rtc_state.ambient_24h_mean = outside_temp;
     rtc_state.room_temp_6h_mean = room_temp;
-    rtc_state.room_temp_snapshot = roundf(room_temp * 10.0f) / 10.0f;
+    rtc_state.room_temp_snapshot = round1(room_temp);
     rtc_state.ambient_24h_sub_ticks = 0;
     rtc_state.seeded = 1;
+
+    // Initial curve target & power target
+    float curve_ambient = round2(s_tunables.room_target + (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) * s_tunables.heating_curve_angle);
+    float room_offset = clampf(s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
+    rtc_state.curve_target = round2(curve_ambient + room_offset * s_tunables.heating_curve_angle);
+    rtc_state.degree_hours_target = 24.0f * (rtc_state.curve_target - s_tunables.room_target);
+
+    float raw_power = fmaxf(27.0f, rtc_state.curve_target - rtc_state.pid_output);
+    rtc_state.power_target = (int16_t)roundf(raw_power);
+
+    s_sampled_once = true;
+    s_last_sample_ms = now_ms;
+    s_integral_started = true;
+    s_last_integral_ms = now_ms;
+    s_pid_started = true;
+    s_last_pid_ms = now_ms;
+
     rtc_state.crc32 = rtc_crc(&rtc_state);
 
     publish_rolling_average_states();
+    publish_derived_states();
   }
 
   // Periodic sampling: once every 60 seconds (60,000 ms)
-  if (s_last_sample_ms == 0 || (millis() - s_last_sample_ms) >= 60000UL) {
-    s_last_sample_ms = millis();
+  if (!s_sampled_once || (now_ms - s_last_sample_ms) >= 60000UL) {
+    s_sampled_once = true;
+    s_last_sample_ms = now_ms;
 
     push_ring_sample(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
                      &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count, outside_temp);
@@ -656,26 +578,98 @@ void meisha_loop(void) {
     rtc_state.crc32 = rtc_crc(&rtc_state);
 
     publish_rolling_average_states();
+    publish_derived_states();
   }
 
-  // Daily Heating Day reset and NVS checkpoint
+  // Continuous curve target & degree-hour budget calculation
+  float curve_ambient = round2(s_tunables.room_target + (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) * s_tunables.heating_curve_angle);
+  float room_offset = clampf(s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
+  rtc_state.curve_target = round2(curve_ambient + room_offset * s_tunables.heating_curve_angle);
+  rtc_state.degree_hours_target = 24.0f * (rtc_state.curve_target - s_tunables.room_target);
+
+  // Continuous integration of room_delta into degree_hours_day and dhw_time
+  rtc_state.room_delta = (pump_flow > 0.0f && valve_state == MEISHA_VALVE_ROOM)
+                         ? (main_outlet_temp - s_tunables.room_target) : 0.0f;
+  if (!s_integral_started) {
+    s_integral_started = true;
+    s_last_integral_ms = now_ms;
+  } else {
+    uint32_t dt_int_ms = now_ms - s_last_integral_ms;
+    if (dt_int_ms > 0) {
+      s_last_integral_ms = now_ms;
+      float dt_hours = (float)dt_int_ms / 3600000.0f;
+      rtc_state.degree_hours_day += rtc_state.room_delta * dt_hours;
+      if (valve_state == MEISHA_VALVE_TANK) {
+        rtc_state.dhw_time += dt_hours;
+      }
+    }
+  }
+
+  // 10-second I-only PID controller with elapsed time
+  if (!s_pid_started) {
+    s_pid_started = true;
+    s_last_pid_ms = now_ms;
+  } else {
+    uint32_t dt_pid_ms = now_ms - s_last_pid_ms;
+    if (dt_pid_ms >= 10000UL) {
+      s_last_pid_ms = now_ms;
+      float dt_pid_sec = (float)dt_pid_ms / 1000.0f;
+      float curve_error = (pump_flow > 0.0f && valve_state == MEISHA_VALVE_ROOM)
+                          ? (rtc_state.curve_target - main_outlet_temp) : 0.0f;
+      float pid_error = -curve_error;
+      rtc_state.pid_output = clampf(rtc_state.pid_output + 5e-5f * dt_pid_sec * pid_error, -1.0f, 1.0f);
+    }
+  }
+
+  // Power Target with ±0.1 K integer hysteresis
+  float raw_power = fmaxf(27.0f, rtc_state.curve_target - rtc_state.pid_output);
+  int16_t lo = (int16_t)roundf(raw_power - 0.1f);
+  int16_t hi = (int16_t)roundf(raw_power + 0.1f);
+  if (rtc_state.power_target < 27) {
+    rtc_state.power_target = (int16_t)roundf(raw_power);
+  } else {
+    if (rtc_state.power_target < lo) rtc_state.power_target = lo;
+    else if (rtc_state.power_target > hi) rtc_state.power_target = hi;
+  }
+
+  // Remaining schedule hours (hours_target & hours_time_left)
+  float denom = 30.0f - s_tunables.room_target;
+  rtc_state.hours_target = (fabsf(denom) > 1e-4f)
+                           ? clampf((rtc_state.curve_target - s_tunables.room_target) / denom * 24.0f, 0.0f, 24.0f)
+                           : 24.0f;
+
   time_t now = time(NULL);
-  struct tm* local_tm = localtime(&now);
-  if (local_tm) {
+  struct tm* tm_ptr = localtime(&now);
+  if (tm_ptr) {
+    struct tm local_tm = *tm_ptr;
+    int hours_diff = (local_tm.tm_hour - (int)s_tunables.heating_start_hour + 24) % 24;
+    float hours_elapsed = (float)hours_diff + (float)local_tm.tm_min / 60.0f + (float)local_tm.tm_sec / 3600.0f;
+    rtc_state.hours_time_left = fmaxf(0.0f, fminf(24.0f, rtc_state.hours_target + rtc_state.dhw_time) - hours_elapsed);
+
+    // Daily Heating Day reset and NVS checkpoint at heating_start_hour:00
     int32_t current_day_id = get_heating_day_id(now, s_tunables.heating_start_hour);
-    if (local_tm->tm_hour == s_tunables.heating_start_hour && local_tm->tm_min == 0) {
+    if (local_tm.tm_hour == s_tunables.heating_start_hour && local_tm.tm_min == 0) {
       if (rtc_state.last_reset_heating_day_id != current_day_id) {
         rtc_state.last_reset_heating_day_id = current_day_id;
-        rtc_state.room_temp_snapshot = roundf(rtc_state.room_temp_6h_mean * 10.0f) / 10.0f;
+        rtc_state.room_temp_snapshot = round1(rtc_state.room_temp_6h_mean);
         rtc_state.degree_hours_day = 0.0f;
         rtc_state.dhw_time = 0.0f;
+
+        float new_ambient = round2(s_tunables.room_target + (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) * s_tunables.heating_curve_angle);
+        float new_offset = clampf(s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
+        rtc_state.curve_target = round2(new_ambient + new_offset * s_tunables.heating_curve_angle);
+        rtc_state.degree_hours_target = 24.0f * (rtc_state.curve_target - s_tunables.room_target);
+
         rtc_state.crc32 = rtc_crc(&rtc_state);
 
         write_nvs_checkpoint();
         publish_sensor_float("room_temp_snapshot", rtc_state.room_temp_snapshot, 1);
+        publish_derived_states();
       }
     }
   }
+
+  rtc_state.crc32 = rtc_crc(&rtc_state);
 
   // 2-hour periodic NVS checkpoint while heat pump is running (TOP0 == 1)
   int hp_state = getDataValue(actData, 0).toInt();
@@ -700,6 +694,7 @@ void meisha_mqtt_connected(void) {
   publish_mode_state();
   publish_all_tunables_state();
   publish_rolling_average_states();
+  publish_derived_states();
 }
 
 bool meisha_mqtt_callback(const char* topic, const char* topic_command, const char* msg, unsigned int length) {
@@ -758,4 +753,44 @@ bool meisha_mqtt_callback(const char* topic, const char* topic_command, const ch
   }
 
   return false;
+}
+
+float meisha_get_curve_target(void) {
+  return rtc_state.curve_target;
+}
+
+float meisha_get_pid_output(void) {
+  return rtc_state.pid_output;
+}
+
+int meisha_get_power_target(void) {
+  return (int)rtc_state.power_target;
+}
+
+float meisha_get_room_delta(void) {
+  return rtc_state.room_delta;
+}
+
+float meisha_get_degree_hours_day(void) {
+  return rtc_state.degree_hours_day;
+}
+
+float meisha_get_degree_hours_target(void) {
+  return rtc_state.degree_hours_target;
+}
+
+float meisha_get_dhw_time(void) {
+  return rtc_state.dhw_time;
+}
+
+float meisha_get_hours_target(void) {
+  return rtc_state.hours_target;
+}
+
+float meisha_get_hours_time_left(void) {
+  return rtc_state.hours_time_left;
+}
+
+bool meisha_get_compressor_running(void) {
+  return rtc_state.compressor_running != 0;
 }

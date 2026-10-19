@@ -133,7 +133,7 @@ void test_nvs_checkpoint_throttling_and_warm_recovery() {
   mock_corrupt_rtc_state();
 
   set_mock_reset_reason(ESP_RST_POWERON);
-  set_mock_time(1761984000); // 08:00 UTC
+  set_mock_time(1761984000 + 7200); // 10:00 UTC (avoids 09:00 daily reset during 3h test window)
   meisha_setup();
 
   actData[0] = 0x71;
