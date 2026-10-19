@@ -125,6 +125,12 @@ static MeishaOpMode parse_op_mode(const String& val) {
   return MEISHA_OPMODE_UNKNOWN;
 }
 
+static bool parse_hp_on(const String& val) {
+  const char* s = val.c_str();
+  if (!s || s[0] == '\0') return false;
+  return (strcmp(s, "1") == 0 || strcasecmp(s, "on") == 0 || strcasecmp(s, "true") == 0);
+}
+
 static uint32_t calculate_crc32(const uint8_t* data, size_t length) {
   uint32_t crc = 0xFFFFFFFF;
   for (size_t i = 0; i < length; i++) {
@@ -576,11 +582,13 @@ void meisha_loop(void) {
     room_temp = s_tunables.room_target;
   }
 
+  bool hp_on = parse_hp_on(getDataValue(actData, 0));
   float pump_flow = getDataValue(actData, 1).toFloat();
   float main_outlet_temp = getDataValue(actData, 6).toFloat();
   float main_target_temp = getDataValue(actData, 7).toFloat();
   float compressor_freq = getDataValue(actData, 8).toFloat();
-  float hp_setpoint = getDataValue(actData, 27).toFloat();
+  String hp_setpoint_str = getDataValue(actData, 27);
+  float hp_setpoint = hp_setpoint_str.toFloat();
 
   String z1_str = getDataValue(actData, 56);
   if (z1_str.length() == 0) {
@@ -726,6 +734,7 @@ void meisha_loop(void) {
                            ? clampf((rtc_state.curve_target - s_tunables.room_target) / denom * 24.0f, 0.0f, 24.0f)
                            : 24.0f;
 
+  bool in_pre_start_blackout = false;
   time_t now = time(NULL);
   struct tm* tm_ptr = localtime(&now);
   if (tm_ptr) {
@@ -733,6 +742,9 @@ void meisha_loop(void) {
     int hours_diff = (local_tm.tm_hour - (int)s_tunables.heating_start_hour + 24) % 24;
     float hours_elapsed = (float)hours_diff + (float)local_tm.tm_min / 60.0f + (float)local_tm.tm_sec / 3600.0f;
     rtc_state.hours_time_left = fmaxf(0.0f, fminf(24.0f, rtc_state.hours_target + rtc_state.dhw_time) - hours_elapsed);
+
+    int hours_until_start = ((int)s_tunables.heating_start_hour - local_tm.tm_hour + 24) % 24;
+    in_pre_start_blackout = (hours_until_start == 1 || hours_until_start == 2);
 
     // Daily Heating Day reset and NVS checkpoint at heating_start_hour:00
     int32_t current_day_id = get_heating_day_id(now, s_tunables.heating_start_hour);
@@ -803,6 +815,16 @@ void meisha_loop(void) {
     }
   }
 
+  // Turn Off non-blocking Step 2 execution (10 seconds after Step 1)
+  if (rtc_state.turn_off_pending && (now_ms - rtc_state.turn_off_start_ms) >= 10000UL) {
+    rtc_state.turn_off_pending = 0;
+    if (!s_tunables.cooling_mode && hp_on && valve_state == MEISHA_VALVE_ROOM && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+      meisha_send_command("SetHeatpump", "0");
+      set_last_action_reason("idle_shutoff");
+      publish_derived_states();
+    }
+  }
+
   // Continuous duration timers for valve == Room and compressor_running == on
   if (valve_state == MEISHA_VALVE_ROOM) {
     if (!rtc_state.valve_room_timer_active) {
@@ -827,80 +849,127 @@ void meisha_loop(void) {
   bool comp_on_5m = rtc_state.comp_on_timer_active &&
                     ((now_ms - rtc_state.comp_on_since_ms) >= 300000UL);
 
-  // Flow temperature modulation (when cooling_mode == off)
+  // Space heating control (when cooling_mode == off)
   if (!s_tunables.cooling_mode) {
-    // 1. Bonusgrad High-Temp (Anti-Overshoot)
-    // Requires valve == Room, compressor_running == on, degree_hours_day < degree_hours_target,
-    // and z1_temp >= int(hp_setpoint) + 3 held for 1m (and a second time if still true after 1m, 2m total).
-    // Bypasses change_lock!
-    bool overshoot_cond = (valve_state == MEISHA_VALVE_ROOM) &&
-                          (rtc_state.compressor_running != 0) &&
-                          (rtc_state.degree_hours_day < rtc_state.degree_hours_target) &&
-                          (z1_temp >= (float)(hp_setpoint_int + 3));
-
-    if (overshoot_cond) {
-      if (!rtc_state.overshoot_timer_active) {
-        rtc_state.overshoot_timer_active = 1;
-        rtc_state.overshoot_start_ms = now_ms;
-        rtc_state.overshoot_steps_fired = 0;
-      } else {
-        uint32_t dur = now_ms - rtc_state.overshoot_start_ms;
-        if (rtc_state.overshoot_steps_fired == 0 && dur >= 60000UL) {
-          int new_sp = hp_setpoint_int + 1;
-          char sp_buf[16];
-          snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
-          meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
-          set_change_lock(now_ms, 15 * 60 * 1000UL);
-          rtc_state.overshoot_steps_fired = 1;
-          set_last_action_reason("bonusgrad_high_temp");
-          publish_derived_states();
-        } else if (rtc_state.overshoot_steps_fired == 1 && dur >= 120000UL) {
-          int new_sp = hp_setpoint_int + 1;
-          char sp_buf[16];
-          snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
-          meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
-          set_change_lock(now_ms, 15 * 60 * 1000UL);
-          rtc_state.overshoot_steps_fired = 2;
-          set_last_action_reason("bonusgrad_high_temp");
-          publish_derived_states();
-        }
+    // 4-Hour Idle Shutoff (Turn Off) detection
+    // Triggers when cooling_mode == off, hp_on, valve == Room, op_mode != DHW only,
+    // and heat_pump_setpoint < 25.1 C held continuously for 4 hours (14,400,000 ms).
+    bool low_sp_cond = hp_on && (valve_state == MEISHA_VALVE_ROOM) &&
+                       (op_mode != MEISHA_OPMODE_DHW_ONLY) &&
+                       (hp_setpoint < 25.1f);
+    if (low_sp_cond) {
+      if (!rtc_state.low_setpoint_timer_active) {
+        rtc_state.low_setpoint_timer_active = 1;
+        rtc_state.low_setpoint_since_ms = now_ms;
+      } else if (!rtc_state.idle_shutoff_fired && (now_ms - rtc_state.low_setpoint_since_ms) >= 14400000UL) {
+        rtc_state.idle_shutoff_fired = 1;
+        meisha_send_command("SetOperationMode", "0");
+        rtc_state.turn_off_pending = 1;
+        rtc_state.turn_off_start_ms = now_ms;
+        set_last_action_reason("idle_shutoff");
+        publish_derived_states();
       }
     } else {
-      rtc_state.overshoot_timer_active = 0;
-      rtc_state.overshoot_steps_fired = 0;
+      rtc_state.low_setpoint_timer_active = 0;
+      rtc_state.idle_shutoff_fired = 0;
     }
 
-    // 2. Bonusgrad Curve Ramping & 3. Malusgrad Ramping (both require change_lock expired)
-    if (!is_change_lock_active(now_ms)) {
-      // Bonusgrad Curve
-      if (valve_room_10m && comp_on_5m &&
-          (main_outlet_temp_int + 1 > main_target_temp_int) &&
-          (rtc_state.degree_hours_day * 1.05f < rtc_state.degree_hours_target) &&
-          (hp_setpoint_int < (int)rtc_state.power_target)) {
-        int new_sp = (hp_setpoint_int + 1 > z1_temp_int + 1)
-                     ? (hp_setpoint_int + 1) : (z1_temp_int + 1);
-        char sp_buf[16];
-        snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
-        meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
-        set_change_lock(now_ms, 30 * 60 * 1000UL);
-        set_last_action_reason("bonusgrad_curve");
+    // Night Mode budget cutoff
+    // Triggers whenever cooling_mode == off, hp_on, degree_hours_day > degree_hours_target,
+    // and current hour is not within the 2-hour pre-start blackout window.
+    bool night_mode_active = hp_on &&
+                             (rtc_state.degree_hours_day > rtc_state.degree_hours_target) &&
+                             !in_pre_start_blackout;
+
+    if (night_mode_active) {
+      if (hp_setpoint_int != 25 && !rtc_state.night_mode_sent) {
+        meisha_send_command("SetZ1HeatRequestTemperature", "25");
+        rtc_state.night_mode_sent = 1;
+        set_last_action_reason("night_mode");
         publish_derived_states();
+      } else if (hp_setpoint_int == 25) {
+        rtc_state.night_mode_sent = 0;
       }
-      // Malusgrad
-      else if (valve_room_10m && comp_on_5m &&
-               (main_outlet_temp_int - 1 < main_target_temp_int) &&
-               (main_target_temp_int > (int)rtc_state.power_target) &&
-               (hp_setpoint_int > (int)rtc_state.power_target)) {
-        int stepped_down = (hp_setpoint_int - 1 < z1_temp_int - 1)
-                           ? (hp_setpoint_int - 1) : (z1_temp_int - 1);
-        int new_sp = (stepped_down > (int)rtc_state.power_target)
-                     ? stepped_down : (int)rtc_state.power_target;
-        char sp_buf[16];
-        snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
-        meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
-        set_change_lock(now_ms, 20 * 60 * 1000UL);
-        set_last_action_reason("malusgrad");
-        publish_derived_states();
+    } else {
+      rtc_state.night_mode_sent = 0;
+    }
+
+    // Flow temperature modulation (Bonusgrad High-Temp, Bonusgrad Curve, Malusgrad)
+    // Inhibit modulation when Night Mode is active.
+    if (!night_mode_active) {
+      // 1. Bonusgrad High-Temp (Anti-Overshoot)
+      // Requires valve == Room, compressor_running == on, degree_hours_day < degree_hours_target,
+      // and z1_temp >= int(hp_setpoint) + 3 held for 1m (and a second time if still true after 1m, 2m total).
+      // Bypasses change_lock!
+      bool overshoot_cond = (valve_state == MEISHA_VALVE_ROOM) &&
+                            (rtc_state.compressor_running != 0) &&
+                            (rtc_state.degree_hours_day < rtc_state.degree_hours_target) &&
+                            (z1_temp >= (float)(hp_setpoint_int + 3));
+
+      if (overshoot_cond) {
+        if (!rtc_state.overshoot_timer_active) {
+          rtc_state.overshoot_timer_active = 1;
+          rtc_state.overshoot_start_ms = now_ms;
+          rtc_state.overshoot_steps_fired = 0;
+        } else {
+          uint32_t dur = now_ms - rtc_state.overshoot_start_ms;
+          if (rtc_state.overshoot_steps_fired == 0 && dur >= 60000UL) {
+            int new_sp = hp_setpoint_int + 1;
+            char sp_buf[16];
+            snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
+            meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
+            set_change_lock(now_ms, 15 * 60 * 1000UL);
+            rtc_state.overshoot_steps_fired = 1;
+            set_last_action_reason("bonusgrad_high_temp");
+            publish_derived_states();
+          } else if (rtc_state.overshoot_steps_fired == 1 && dur >= 120000UL) {
+            int new_sp = hp_setpoint_int + 1;
+            char sp_buf[16];
+            snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
+            meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
+            set_change_lock(now_ms, 15 * 60 * 1000UL);
+            rtc_state.overshoot_steps_fired = 2;
+            set_last_action_reason("bonusgrad_high_temp");
+            publish_derived_states();
+          }
+        }
+      } else {
+        rtc_state.overshoot_timer_active = 0;
+        rtc_state.overshoot_steps_fired = 0;
+      }
+
+      // 2. Bonusgrad Curve Ramping & 3. Malusgrad Ramping (both require change_lock expired)
+      if (!is_change_lock_active(now_ms)) {
+        // Bonusgrad Curve
+        if (valve_room_10m && comp_on_5m &&
+            (main_outlet_temp_int + 1 > main_target_temp_int) &&
+            (rtc_state.degree_hours_day * 1.05f < rtc_state.degree_hours_target) &&
+            (hp_setpoint_int < (int)rtc_state.power_target)) {
+          int new_sp = (hp_setpoint_int + 1 > z1_temp_int + 1)
+                       ? (hp_setpoint_int + 1) : (z1_temp_int + 1);
+          char sp_buf[16];
+          snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
+          meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
+          set_change_lock(now_ms, 30 * 60 * 1000UL);
+          set_last_action_reason("bonusgrad_curve");
+          publish_derived_states();
+        }
+        // Malusgrad
+        else if (valve_room_10m && comp_on_5m &&
+                 (main_outlet_temp_int - 1 < main_target_temp_int) &&
+                 (main_target_temp_int > (int)rtc_state.power_target) &&
+                 (hp_setpoint_int > (int)rtc_state.power_target)) {
+          int stepped_down = (hp_setpoint_int - 1 < z1_temp_int - 1)
+                             ? (hp_setpoint_int - 1) : (z1_temp_int - 1);
+          int new_sp = (stepped_down > (int)rtc_state.power_target)
+                       ? stepped_down : (int)rtc_state.power_target;
+          char sp_buf[16];
+          snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
+          meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
+          set_change_lock(now_ms, 20 * 60 * 1000UL);
+          set_last_action_reason("malusgrad");
+          publish_derived_states();
+        }
       }
     }
   }

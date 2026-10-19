@@ -89,6 +89,10 @@ struct MeishaRtcState {
   uint8_t overshoot_steps_fired;
   uint8_t change_lock_active;
   uint8_t day_mode_pending;
+  uint8_t low_setpoint_timer_active;
+  uint8_t idle_shutoff_fired;
+  uint8_t turn_off_pending;
+  uint8_t night_mode_sent;
   uint16_t timer_reserved_pad;
 
   uint32_t valve_room_since_ms;
@@ -97,6 +101,8 @@ struct MeishaRtcState {
   uint32_t change_lock_set_ms;
   uint32_t change_lock_duration_ms;
   uint32_t day_mode_start_ms;
+  uint32_t low_setpoint_since_ms;
+  uint32_t turn_off_start_ms;
 
   float change_lock_remaining_min;
   char last_action_reason[32];
