@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** resolved
+**Status:** closed
 
 - [x] HeishaMon firmware source is added to the repository with `MeishaController` hooked into `setup()`, `loop()`, `mqtt_reconnect()`, and `mqtt_callback()`, gated so controller ticks wait until the first valid `0x10` heat pump frame (`actData[0] == 0x71`) has been decoded.
 - [x] A Linux host C++ test suite compiles and runs `MeishaController` against mocked HeishaMon/Arduino primitives (`getDataValue`, `send_heatpump_command`, `mqtt_client`, `Preferences`, `millis`, `localtime`, `esp_reset_reason`, and `RTC_NOINIT_ATTR` SRAM).

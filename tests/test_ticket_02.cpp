@@ -228,11 +228,70 @@ void test_cold_start_recovery() {
   std::cout << "[PASS] test_cold_start_recovery" << std::endl;
 }
 
+void test_deferred_sntp_warm_recovery() {
+  reset_mock_environment();
+  Preferences::reset();
+
+  // Create a checkpoint saved at 10:00 UTC
+  uint32_t saved_epoch = 1761984000 + 7200;
+  MeishaNvsCheckpoint chkpt;
+  chkpt.ambient_24h_mean = 6.5f;
+  chkpt.ambient_1h_mean = 6.5f;
+  chkpt.room_temp_6h_mean = 21.5f;
+  chkpt.room_temp_snapshot = 21.5f;
+  chkpt.degree_hours_day = 14.2f;
+  chkpt.dhw_time = 0.75f;
+  chkpt.pid_output = 0.2f;
+  chkpt.saved_at_epoch = saved_epoch;
+
+  Preferences prefs;
+  prefs.begin("meisha_cfg");
+  prefs.putBytes("chkpt", &chkpt, sizeof(chkpt));
+
+  mock_corrupt_rtc_state();
+  set_mock_reset_reason(ESP_RST_POWERON);
+
+  // Real-hardware scenario: SNTP deferred, clock is at epoch 0 during setup()
+  set_mock_time(0);
+  meisha_setup();
+
+  // NVS decision is deferred until SNTP syncs
+  assert(meisha_get_rtc_state()->nvs_decision_pending == 1);
+  assert(std::fabs(meisha_get_rtc_state()->pid_output - 0.2f) < 1e-4f);
+
+  // First live frame arrives at t=5s while SNTP is still syncing (mock_time = 5)
+  actData[0] = 0x71;
+  set_mock_topic_value(14, "10.0");
+  set_mock_topic_value(33, "20.0");
+  advance_mock_time(5);
+  advance_mock_millis(5000);
+  meisha_loop();
+
+  // Live seeding was withheld because nvs_decision_pending is active
+  assert(meisha_get_rtc_state()->nvs_decision_pending == 1);
+  assert(std::fabs(meisha_get_ambient_1h() - 6.5f) < 0.1f);
+
+  // Now SNTP syncs to 1 hour after the saved checkpoint (same heating day)
+  set_mock_time(saved_epoch + 3600);
+  advance_mock_millis(1000);
+  meisha_loop();
+
+  // Decision resolved: warm recovery completed successfully!
+  assert(meisha_get_rtc_state()->nvs_decision_pending == 0);
+  assert(meisha_get_rtc_state()->seeded == 1);
+  assert(std::fabs(meisha_get_degree_hours_day() - 14.2f) < 0.1f);
+  assert(std::fabs(meisha_get_dhw_time() - 0.75f) < 0.1f);
+  assert(std::fabs(meisha_get_room_temp_snapshot() - 21.5f) < 0.1f);
+
+  std::cout << "[PASS] test_deferred_sntp_warm_recovery" << std::endl;
+}
+
 int main() {
   test_tunables_defaults_discovery_and_bounds();
   test_rolling_averages_and_hot_reboot();
   test_nvs_checkpoint_throttling_and_warm_recovery();
   test_cold_start_recovery();
+  test_deferred_sntp_warm_recovery();
 
   std::cout << "\nAll Ticket 02 tests passed successfully!" << std::endl;
   return 0;

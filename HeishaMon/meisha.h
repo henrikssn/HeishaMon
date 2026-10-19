@@ -119,7 +119,7 @@ struct MeishaRtcState {
   uint8_t fm_on_comp_timer_active;
   uint8_t prev_delta_valid;
   uint8_t fm_on_sent;
-  uint8_t timer_reserved_pad[1];
+  uint8_t nvs_decision_pending;
 
   float prev_pipe_ambient_delta;
 

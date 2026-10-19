@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: HeishaMon Fork, Host Test Harness, Mode Control (`Off` / `Shadow` / `Active`), and Crash-Loop Safeguard
 
-**Status:** resolved
+**Status:** closed
 
 - [x] All five user tunables (`room_target` `18–25 °C` default `23`, `heating_curve_start` `12–20 °C` default `14`, `heating_curve_angle` `0.2–1.5` step `0.1` default `0.8`, `heating_start_hour` `0–23` default `9`, and `cooling_mode` `off`/`on` default `off`) are published via MQTT Auto-Discovery under `meisha_esp_`, accept updates over MQTT, validate bounds, and write to NVS only when a value actually changes.
 - [x] Rolling averages `ambient_1h` (1h outdoor temperature), `ambient_24h` (24h outdoor temperature), and `room_temp_6h` (6h room thermostat temperature) are sampled from decoded heat pump telemetry into ring buffers stored in `RTC_NOINIT_ATTR` SRAM protected by a CRC32 checksum and published to MQTT via Auto-Discovery.

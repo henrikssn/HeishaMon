@@ -390,7 +390,8 @@ static void write_nvs_checkpoint(void) {
   chkpt.degree_hours_day = rtc_state.degree_hours_day;
   chkpt.dhw_time = rtc_state.dhw_time;
   chkpt.pid_output = rtc_state.pid_output;
-  chkpt.saved_at_epoch = (uint32_t)time(NULL);
+  time_t now = time(NULL);
+  chkpt.saved_at_epoch = (now > 1000000) ? (uint32_t)now : 0;
 
   s_prefs.putBytes("chkpt", &chkpt, sizeof(chkpt));
 }
@@ -540,9 +541,29 @@ void meisha_setup(void) {
         (s_prefs.getBytes("chkpt", &chkpt, sizeof(chkpt)) == sizeof(chkpt));
     time_t now = time(NULL);
 
-    if (has_chkpt && now > 1000000 && chkpt.saved_at_epoch > 0 &&
-        now >= chkpt.saved_at_epoch &&
-        (now - chkpt.saved_at_epoch) < 6 * 3600) {
+    if (has_chkpt && chkpt.saved_at_epoch > 0 && now <= 1000000) {
+      // Real-hardware cold boot before SNTP syncs: pre-seed ring buffers from checkpoint
+      // and defer the < 6h decision to meisha_loop() once SNTP syncs.
+      fill_ring_buffer(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
+                       &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count,
+                       chkpt.ambient_1h_mean);
+      fill_ring_buffer(rtc_state.ambient_24h_buf, MEISHA_AMBIENT_24H_SAMPLES,
+                       &rtc_state.ambient_24h_head,
+                       &rtc_state.ambient_24h_count, chkpt.ambient_24h_mean);
+      fill_ring_buffer(rtc_state.room_6h_buf, MEISHA_ROOM_6H_SAMPLES,
+                       &rtc_state.room_6h_head, &rtc_state.room_6h_count,
+                       chkpt.room_temp_6h_mean);
+
+      rtc_state.ambient_1h_mean = chkpt.ambient_1h_mean;
+      rtc_state.ambient_24h_mean = chkpt.ambient_24h_mean;
+      rtc_state.room_temp_6h_mean = chkpt.room_temp_6h_mean;
+      rtc_state.room_temp_snapshot = chkpt.room_temp_snapshot;
+      rtc_state.pid_output = chkpt.pid_output;
+      rtc_state.nvs_decision_pending = 1;
+      rtc_state.seeded = 0;
+    } else if (has_chkpt && now > 1000000 && chkpt.saved_at_epoch > 0 &&
+               now >= chkpt.saved_at_epoch &&
+               (now - chkpt.saved_at_epoch) < 6 * 3600) {
       // Warm recovery (< 6h old checkpoint)
       fill_ring_buffer(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
                        &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count,
@@ -704,8 +725,38 @@ void meisha_loop(void) {
 
   uint32_t now_ms = millis();
 
-  // Live seeding on cold start
-  if (rtc_state.seeded == 0) {
+  // If waiting for SNTP to decide on NVS checkpoint (< 6h vs >= 6h)
+  if (rtc_state.nvs_decision_pending) {
+    time_t now_epoch = time(NULL);
+    if (now_epoch > 1000000) {
+      MeishaNvsCheckpoint chkpt;
+      if (s_prefs.getBytes("chkpt", &chkpt, sizeof(chkpt)) == sizeof(chkpt)) {
+        if (chkpt.saved_at_epoch > 0 && now_epoch >= chkpt.saved_at_epoch &&
+            (now_epoch - chkpt.saved_at_epoch) < 6 * 3600) {
+          int32_t saved_day = get_heating_day_id((time_t)chkpt.saved_at_epoch,
+                                                 s_tunables.heating_start_hour);
+          int32_t now_day =
+              get_heating_day_id(now_epoch, s_tunables.heating_start_hour);
+          if (saved_day == now_day) {
+            rtc_state.degree_hours_day = chkpt.degree_hours_day;
+            rtc_state.dhw_time = chkpt.dhw_time;
+            rtc_state.room_temp_snapshot = chkpt.room_temp_snapshot;
+            rtc_state.last_reset_heating_day_id = saved_day;
+          }
+          rtc_state.seeded = 1;
+        }
+      }
+      rtc_state.nvs_decision_pending = 0;
+      rtc_state.crc32 = rtc_crc(&rtc_state);
+    } else if (now_ms >= 60000UL) {
+      // 60s without NTP sync: proceed with cold start live seeding
+      rtc_state.nvs_decision_pending = 0;
+      rtc_state.crc32 = rtc_crc(&rtc_state);
+    }
+  }
+
+  // Live seeding on cold start (only if not waiting for SNTP NVS decision)
+  if (rtc_state.seeded == 0 && !rtc_state.nvs_decision_pending) {
     fill_ring_buffer(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
                      &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count,
                      outside_temp);
@@ -859,7 +910,7 @@ void meisha_loop(void) {
   bool dhw_start_triggered = false;
   time_t now = time(NULL);
   struct tm *tm_ptr = localtime(&now);
-  if (tm_ptr) {
+  if (now > 1000000 && tm_ptr) {
     struct tm local_tm = *tm_ptr;
     int hours_diff =
         (local_tm.tm_hour - (int)s_tunables.heating_start_hour + 24) % 24;
@@ -874,7 +925,8 @@ void meisha_loop(void) {
     in_pre_start_blackout = (hours_until_start == 1 || hours_until_start == 2);
 
     // Daily 14:00 DHW Schedule Trigger
-    int32_t current_cal_day_id = (int32_t)(now / 86400);
+    int32_t current_cal_day_id = (local_tm.tm_year + 1900) * 10000 +
+                                 (local_tm.tm_mon + 1) * 100 + local_tm.tm_mday;
     if (local_tm.tm_hour == 14 && local_tm.tm_min == 0) {
       if (rtc_state.last_dhw_schedule_day_id != current_cal_day_id) {
         rtc_state.last_dhw_schedule_day_id = current_cal_day_id;

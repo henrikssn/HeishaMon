@@ -73,16 +73,11 @@ void meisha_publish_discovery_table(MqttClientType &mqtt,
            "\"object_id\":\"%scontrol_mode\","
            "\"command_topic\":\"%s/meisha/set/control_mode\","
            "\"state_topic\":\"%s/meisha/state/control_mode\","
-           "\"availability_topic\":\"%s/%s\","
-           "\"payload_available\":\"Online\","
-           "\"payload_not_available\":\"Offline\","
            "\"options\":[\"Off\",\"Shadow\",\"Active\"],"
            "\"device\":{\"identifiers\":[\"meisha_esp_controller\"],\"name\":"
-           "\"Meisha Heat Pump Controller\",\"model\":\"HeishaMon Large "
-           "ESP32-S3\",\"manufacturer\":\"Custom\"}"
+           "\"Meisha Heat Pump Controller\"}"
            "}",
-           MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX, topic_base, topic_base,
-           topic_base, will_topic);
+           MEISHA_ENTITY_PREFIX, MEISHA_ENTITY_PREFIX, topic_base, topic_base);
   mqtt.publish(disc_topic, payload, true);
 
   // 2. Cooling mode switch
