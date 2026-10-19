@@ -744,6 +744,8 @@ void meisha_loop(void) {
             rtc_state.last_reset_heating_day_id = saved_day;
           }
           rtc_state.seeded = 1;
+          publish_rolling_average_states();
+          publish_derived_states();
         }
       }
       rtc_state.nvs_decision_pending = 0;
@@ -1534,8 +1536,10 @@ void meisha_mqtt_connected(void) {
   publish_ha_discovery();
   publish_mode_state();
   publish_all_tunables_state();
-  publish_rolling_average_states();
-  publish_derived_states();
+  if (rtc_state.seeded) {
+    publish_rolling_average_states();
+    publish_derived_states();
+  }
 }
 
 bool meisha_mqtt_callback(const char *topic, const char *topic_command,

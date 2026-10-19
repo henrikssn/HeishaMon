@@ -4,7 +4,7 @@
 
 **Type:** Bug / Reliability
 
-**Status:** open
+**Status:** closed
 
 ## Summary
 
@@ -65,7 +65,7 @@ If `rtc_state.seeded == 0` (cold start or pending SNTP/telemetry), `ambient_1h_m
 
 ## Acceptance Criteria
 
-- [ ] On cold boot or when `rtc_state.seeded == 0`, `meisha_mqtt_connected()` publishes HA discovery, control mode, and user tunables, but does NOT publish rolling averages or derived metrics.
-- [ ] On warm boot where `rtc_state.seeded == 1` (valid RTC SRAM or warm NVS checkpoint), `meisha_mqtt_connected()` publishes rolling averages and derived metrics immediately.
-- [ ] In `meisha_process_heatpump_data()`, once `rtc_state.seeded` becomes `1`, populated non-zero rolling averages and derived metrics are published via MQTT.
-- [ ] Host C++ tests in `tests/test_meisha.cpp` verify that unseeded MQTT connection events emit no zero values for rolling averages or derived metrics.
+- [x] On cold boot or when `rtc_state.seeded == 0`, `meisha_mqtt_connected()` publishes HA discovery, control mode, and user tunables, but does NOT publish rolling averages or derived metrics.
+- [x] On warm boot where `rtc_state.seeded == 1` (valid RTC SRAM or warm NVS checkpoint), `meisha_mqtt_connected()` publishes rolling averages and derived metrics immediately.
+- [x] In `meisha_process_heatpump_data()`, once `rtc_state.seeded` becomes `1`, populated non-zero rolling averages and derived metrics are published via MQTT.
+- [x] Host C++ tests in `tests/test_ticket_09.cpp` verify that unseeded MQTT connection events emit no zero values for rolling averages or derived metrics.
