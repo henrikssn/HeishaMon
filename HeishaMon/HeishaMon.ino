@@ -45,6 +45,7 @@
 #include "commands.h"
 #include "rules.h"
 #include "version.h"
+#include "meisha.h"
 
 DNSServer dnsServer;
 
@@ -534,6 +535,7 @@ void mqtt_reconnect()
         mqtt_client.subscribe((char*)"panasonic_heat_pump/raw/data"); //subscribe to raw heatpump data over MQTT
       }
 #endif
+      meisha_mqtt_connected();
     }
 //#ifdef TLS_SUPPORT // error state is useful in any case
     else {
@@ -1033,6 +1035,8 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       if ((strchr(topic_1wire_address, '/') == NULL) && (length > 0)) { //only handle the address topic itself (not .../alias) and skip empty (cleared) retained messages
         restoreDallasFromMqtt(topic_1wire_address, String(msg).toFloat(), log_message);
       }
+    } else if (meisha_mqtt_callback(topic, topic_command, msg, length)) {
+      // handled by meisha module
     }
     free(topiccopy);
     mqttcallbackinprogress = false;
@@ -1942,6 +1946,7 @@ void setup() {
   }
 
   delay(200); //small delay to allow double reset
+  meisha_setup();
   #ifdef ESP32
   //turn off neopixel to indicate end of setup
   neoPixelState = pixels.Color(0,0,0);
@@ -2048,6 +2053,8 @@ void loop() {
 #endif
 
   if (heishamonSettings.use_1wire) dallasLoop(mqtt_client, log_message, heishamonSettings.mqtt_topic_base);
+
+  meisha_loop();
 
   if (dallasMqttRestorePending && ((unsigned long)(millis() - dallasMqttRestoreStart) > DALLAS_MQTT_RESTORE_TIMEOUT)) {
     sprintf_P(mqtt_topic, PSTR("%s/%s/+"), heishamonSettings.mqtt_topic_base, mqtt_topic_1wire);

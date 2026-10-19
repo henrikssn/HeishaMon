@@ -1,0 +1,10 @@
+# Native C++ Controller Module Embedded in a HeishaMon Fork First
+
+We will implement the Meisha heat pump control loop as a native C++ module inside a fork of `heishamon/HeishaMon` with an `Off / Shadow / Active` operating mode switch, calling HeishaMon and Arduino APIs (`getDataValue`, `send_heatpump_command`, `mqtt_client`, `Preferences`, `millis`, `localtime`) directly and mocking those externs for host-side testing, rather than using the HeishaMon Rules VM or migrating immediately to ESPHome.
+
+## Considered Options
+
+- **Stock HeishaMon Rules Engine (`/rules.txt`)**: Rejected because the Rules VM cannot accept dynamic setpoints from Home Assistant over MQTT without re-uploading `/rules.txt` (which wipes all `#` globals in RAM), has no non-volatile persistence across reboots, truncates floats to 27 bits, and skips loading `/rules.txt` after brownout/watchdog resets unless `force_rules` is set.
+- **Forked HeishaMon with Rules VM Patches**: Rejected because the Rules VM enforces a hard 127-slot `varstack` ceiling across all symbols and literals, lacks arrays/loops for 24h/6h/1h sliding windows, and executes dry-run validation passes during parsing that complicate MQTT and NVS side effects.
+- **Immediate Migration to ESPHome (`ElVit/esphome_components`)**: Viable long-term target, but replacing the entire firmware stack at once carries higher initial migration risk (requiring entity/MQTT remapping and potential physical USB-C recovery if network configuration fails).
+- **Native C++ Module in a HeishaMon Fork First (Chosen)**: Keeps 100% zero-touch compatibility with `kamaradclimber/heishamon-homeassistant`, `/config.json`, `/dallas.json`, and Web UI `/firmware` OTA flashing. Running in **Shadow Mode** allows side-by-side verification against the live Home Assistant automations before switching to `Active`. Calling HeishaMon/Arduino primitives directly avoids unnecessary abstraction layers now; host unit tests mock those externs (`Examples/Rules/harness/` style), and when later migrating to ESPHome, the C++ module can be forked and its hardware/MQTT/NVS calls replaced with ESPHome equivalents.

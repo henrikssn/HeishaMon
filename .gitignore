@@ -1,4 +1,4 @@
-﻿################################################################################
+################################################################################
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
@@ -13,5 +13,24 @@ firmware.map
 firmware.asm
 *.map
 *.elf
+
+# Compiled objects and test runners
+*.o
+*.a
+*.so
+test_runner
+tests/test_runner
+
+# Build output directories and binaries
+build/
+*.bin
+*.hex
+!binaries/**
+
+# Editor and OS temporary files
+*.swp
+*.swo
+*~
+.DS_Store
 
 binaries/prepare_release.bat

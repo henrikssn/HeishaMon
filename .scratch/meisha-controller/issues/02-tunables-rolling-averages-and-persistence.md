@@ -1,0 +1,14 @@
+# 02: User Tunables, Rolling Averages, and Two-Tier Persistence (`RTC_NOINIT_ATTR` + 32-Byte NVS Checkpoint)
+
+**What to build:** Expose the five active user-tunable parameters (**Room Target**, heating curve start, heating curve angle, heating start hour, and cooling mode) via Home Assistant MQTT Auto-Discovery with immediate NVS persistence on change, maintain the 1-hour (`ambient_1h`), 24-hour (`ambient_24h`), and 6-hour (`room_temp_6h`) rolling averages in CRC32-guarded `RTC_NOINIT_ATTR` SRAM, implement the 32-byte wear-leveled NVS checkpoint (written only at daily reset and every 2 hours while the heat pump is running), and support all three boot recovery paths (valid RTC SRAM, `< 6h` warm NVS checkpoint, and `>= 6h` cold-start live sensor seeding).
+
+**Blocked by:** 01: HeishaMon Fork, Host Test Harness, Mode Control (`Off` / `Shadow` / `Active`), and Crash-Loop Safeguard
+
+**Status:** ready-for-agent
+
+- [ ] All five user tunables (`room_target` `18–25 °C` default `23`, `heating_curve_start` `12–20 °C` default `14`, `heating_curve_angle` `0.2–1.5` step `0.1` default `0.8`, `heating_start_hour` `0–23` default `9`, and `cooling_mode` `off`/`on` default `off`) are published via MQTT Auto-Discovery under `meisha_esp_`, accept updates over MQTT, validate bounds, and write to NVS only when a value actually changes.
+- [ ] Rolling averages `ambient_1h` (1h outdoor temperature), `ambient_24h` (24h outdoor temperature), and `room_temp_6h` (6h room thermostat temperature) are sampled from decoded heat pump telemetry into ring buffers stored in `RTC_NOINIT_ATTR` SRAM protected by a CRC32 checksum and published to MQTT via Auto-Discovery.
+- [ ] Soft reboots, watchdog resets, and OTA updates with a valid `RTC_NOINIT_ATTR` CRC32 preserve 100% of ring buffer samples and operational state with zero NVS flash writes.
+- [ ] A compact 32-byte scalar checkpoint (`ambient_24h_mean`, `ambient_1h_mean`, `room_temp_6h_mean`, `room_temp_snapshot`, `degree_hours_day`, `dhw_time`, `pid_output`, `saved_at_epoch`) is written to NVS only at the daily **Heating Day** reset and once every 2 hours while `Heatpump_State == 1`.
+- [ ] On cold boot (invalid `RTC_NOINIT_ATTR` CRC32), if the NVS checkpoint is `< 6 hours` old, ring buffers are pre-filled with the saved means and same-**Heating Day** accumulators (`degree_hours_day`, `dhw_time`, `room_temp_snapshot`, `pid_output`) are restored; if missing or `>= 6 hours` old, `pid_output` and tunables are restored from NVS and ring buffers (plus `room_temp_snapshot`) are seeded immediately from the first valid live `Outside_Temp` and `Room_Thermostat_Temp` readings (falling back to `room_target` if `Room_Thermostat_Temp` is unavailable).
+- [ ] Host C++ tests verify tunable MQTT updates, NVS write-throttling, and all three boot recovery paths (`RTC_NOINIT_ATTR` valid, `< 6h` warm NVS, `>= 6h` cold start).
