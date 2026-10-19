@@ -93,7 +93,17 @@ struct MeishaRtcState {
   uint8_t idle_shutoff_fired;
   uint8_t turn_off_pending;
   uint8_t night_mode_sent;
+  uint8_t dhw_low_temp_timer_active;
+  uint8_t dhw_low_temp_fired;
+  uint8_t dhw_start_pending;
+  uint8_t dhw_seen_valve_tank;
+  uint8_t dhw_valve_room_timer_active;
+  uint8_t dhw_comp_off_timer_active;
+  uint8_t dhw_end_fired;
+  uint8_t dhw_end_cool_pending;
   uint16_t timer_reserved_pad;
+
+  int32_t last_dhw_schedule_day_id;
 
   uint32_t valve_room_since_ms;
   uint32_t comp_on_since_ms;
@@ -103,6 +113,11 @@ struct MeishaRtcState {
   uint32_t day_mode_start_ms;
   uint32_t low_setpoint_since_ms;
   uint32_t turn_off_start_ms;
+  uint32_t dhw_low_temp_since_ms;
+  uint32_t dhw_start_ms;
+  uint32_t dhw_valve_room_since_ms;
+  uint32_t dhw_comp_off_since_ms;
+  uint32_t dhw_end_cool_start_ms;
 
   float change_lock_remaining_min;
   char last_action_reason[32];

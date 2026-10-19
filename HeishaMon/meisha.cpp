@@ -517,6 +517,12 @@ void meisha_setup(void) {
     if (rtc_state.last_action_reason[0] == '\0') {
       strcpy(rtc_state.last_action_reason, "idle");
     }
+    if (rtc_state.dhw_start_pending && millis() < rtc_state.dhw_start_ms) {
+      rtc_state.dhw_start_pending = 0;
+    }
+    if (rtc_state.dhw_end_cool_pending && millis() < rtc_state.dhw_end_cool_start_ms) {
+      rtc_state.dhw_end_cool_pending = 0;
+    }
   }
 
 #if defined(ESP32) || defined(MOCK_HEISHAMON)
@@ -598,6 +604,8 @@ void meisha_loop(void) {
 
   MeishaValveState valve_state = parse_valve_state(getDataValue(actData, 20));
   MeishaOpMode op_mode = parse_op_mode(getDataValue(actData, 4));
+  String dhw_str = getDataValue(actData, 10);
+  float dhw_temp = dhw_str.length() > 0 ? dhw_str.toFloat() : 50.0f;
 
   int main_outlet_temp_int = (int)main_outlet_temp;
   int main_target_temp_int = (int)main_target_temp;
@@ -735,6 +743,7 @@ void meisha_loop(void) {
                            : 24.0f;
 
   bool in_pre_start_blackout = false;
+  bool dhw_start_triggered = false;
   time_t now = time(NULL);
   struct tm* tm_ptr = localtime(&now);
   if (tm_ptr) {
@@ -745,6 +754,17 @@ void meisha_loop(void) {
 
     int hours_until_start = ((int)s_tunables.heating_start_hour - local_tm.tm_hour + 24) % 24;
     in_pre_start_blackout = (hours_until_start == 1 || hours_until_start == 2);
+
+    // Daily 14:00 DHW Schedule Trigger
+    int32_t current_cal_day_id = (int32_t)(now / 86400);
+    if (local_tm.tm_hour == 14 && local_tm.tm_min == 0) {
+      if (rtc_state.last_dhw_schedule_day_id != current_cal_day_id) {
+        rtc_state.last_dhw_schedule_day_id = current_cal_day_id;
+        if (valve_state != MEISHA_VALVE_TANK && dhw_temp < 45.0f && !rtc_state.dhw_start_pending && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+          dhw_start_triggered = true;
+        }
+      }
+    }
 
     // Daily Heating Day reset and NVS checkpoint at heating_start_hour:00
     int32_t current_day_id = get_heating_day_id(now, s_tunables.heating_start_hour);
@@ -793,6 +813,23 @@ void meisha_loop(void) {
     }
   }
 
+  // Low-temperature DHW trigger (dhw_temp < 38.0 C for 1 minute = 60,000 ms)
+  if (dhw_temp < 38.0f && valve_state != MEISHA_VALVE_TANK && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+    if (!rtc_state.dhw_low_temp_timer_active) {
+      rtc_state.dhw_low_temp_timer_active = 1;
+      rtc_state.dhw_low_temp_since_ms = now_ms;
+      rtc_state.dhw_low_temp_fired = 0;
+    } else if (!rtc_state.dhw_low_temp_fired && (now_ms - rtc_state.dhw_low_temp_since_ms) >= 60000UL) {
+      rtc_state.dhw_low_temp_fired = 1;
+      if (dhw_temp < 45.0f && !rtc_state.dhw_start_pending) {
+        dhw_start_triggered = true;
+      }
+    }
+  } else {
+    rtc_state.dhw_low_temp_timer_active = 0;
+    rtc_state.dhw_low_temp_fired = 0;
+  }
+
   // Update change lock remaining time
   update_change_lock_remaining(now_ms);
 
@@ -802,16 +839,16 @@ void meisha_loop(void) {
     if (!s_tunables.cooling_mode && rtc_state.hours_time_left > 1.0f) {
       if (valve_state != MEISHA_VALVE_TANK && op_mode != MEISHA_OPMODE_DHW_ONLY) {
         meisha_send_command("SetOperationMode", "0");
+        meisha_send_command("SetHeatpump", "1");
+        int target_sp = (rtc_state.power_target > 27) ? (int)rtc_state.power_target : 27;
+        if (hp_setpoint_int < target_sp) {
+          char sp_buf[16];
+          snprintf(sp_buf, sizeof(sp_buf), "%d", target_sp);
+          meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
+        }
+        set_last_action_reason("day_mode_1");
+        publish_derived_states();
       }
-      meisha_send_command("SetHeatpump", "1");
-      int target_sp = (rtc_state.power_target > 27) ? (int)rtc_state.power_target : 27;
-      if (hp_setpoint_int < target_sp) {
-        char sp_buf[16];
-        snprintf(sp_buf, sizeof(sp_buf), "%d", target_sp);
-        meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
-      }
-      set_last_action_reason("day_mode_1");
-      publish_derived_states();
     }
   }
 
@@ -821,6 +858,24 @@ void meisha_loop(void) {
     if (!s_tunables.cooling_mode && hp_on && valve_state == MEISHA_VALVE_ROOM && op_mode != MEISHA_OPMODE_DHW_ONLY) {
       meisha_send_command("SetHeatpump", "0");
       set_last_action_reason("idle_shutoff");
+      publish_derived_states();
+    }
+  }
+
+  // DHW Start non-blocking Step 2 execution (10 seconds after turning HP on)
+  if (rtc_state.dhw_start_pending && (now_ms - rtc_state.dhw_start_ms) >= 10000UL) {
+    rtc_state.dhw_start_pending = 0;
+    meisha_send_command("SetOperationMode", "3");
+    set_last_action_reason("dhw_start");
+    publish_derived_states();
+  }
+
+  // DHW End summer non-blocking Step 2 execution (10 seconds after setting Cool only)
+  if (rtc_state.dhw_end_cool_pending && (now_ms - rtc_state.dhw_end_cool_start_ms) >= 10000UL) {
+    rtc_state.dhw_end_cool_pending = 0;
+    if (s_tunables.cooling_mode && rtc_state.ambient_24h_mean < 22.0f) {
+      meisha_send_command("SetHeatpump", "0");
+      set_last_action_reason("dhw_end");
       publish_derived_states();
     }
   }
@@ -849,8 +904,81 @@ void meisha_loop(void) {
   bool comp_on_5m = rtc_state.comp_on_timer_active &&
                     ((now_ms - rtc_state.comp_on_since_ms) >= 300000UL);
 
-  // Space heating control (when cooling_mode == off)
-  if (!s_tunables.cooling_mode) {
+  // Execute DHW Start
+  if (dhw_start_triggered) {
+    if (!hp_on) {
+      meisha_send_command("SetHeatpump", "1");
+    }
+    rtc_state.dhw_start_pending = 1;
+    rtc_state.dhw_start_ms = now_ms;
+    rtc_state.dhw_end_fired = 0;
+    rtc_state.dhw_seen_valve_tank = 0;
+    rtc_state.dhw_valve_room_timer_active = 0;
+    rtc_state.dhw_comp_off_timer_active = 0;
+    set_last_action_reason("dhw_start");
+    publish_derived_states();
+  }
+
+  // DHW End detection (while op_mode == DHW only)
+  if (op_mode == MEISHA_OPMODE_DHW_ONLY) {
+    if (valve_state == MEISHA_VALVE_TANK) {
+      rtc_state.dhw_seen_valve_tank = 1;
+      rtc_state.dhw_valve_room_timer_active = 0;
+      rtc_state.dhw_end_fired = 0;
+    } else if (valve_state == MEISHA_VALVE_ROOM && rtc_state.dhw_seen_valve_tank != 0) {
+      if (!rtc_state.dhw_valve_room_timer_active) {
+        rtc_state.dhw_valve_room_timer_active = 1;
+        rtc_state.dhw_valve_room_since_ms = now_ms;
+      }
+    } else {
+      rtc_state.dhw_valve_room_timer_active = 0;
+    }
+
+    if (rtc_state.compressor_running == 0) {
+      if (!rtc_state.dhw_comp_off_timer_active) {
+        rtc_state.dhw_comp_off_timer_active = 1;
+        rtc_state.dhw_comp_off_since_ms = now_ms;
+      }
+    } else {
+      rtc_state.dhw_comp_off_timer_active = 0;
+      rtc_state.dhw_end_fired = 0;
+    }
+
+    bool valve_room_15m = rtc_state.dhw_valve_room_timer_active &&
+                          ((now_ms - rtc_state.dhw_valve_room_since_ms) >= 900000UL);
+    bool comp_off_15m = rtc_state.dhw_comp_off_timer_active &&
+                        ((now_ms - rtc_state.dhw_comp_off_since_ms) >= 900000UL);
+
+    if (!rtc_state.dhw_end_fired && (valve_room_15m || comp_off_15m)) {
+      rtc_state.dhw_end_fired = 1;
+      rtc_state.dhw_seen_valve_tank = 0;
+      rtc_state.dhw_valve_room_timer_active = 0;
+      rtc_state.dhw_comp_off_timer_active = 0;
+
+      if (s_tunables.cooling_mode) {
+        meisha_send_command("SetOperationMode", "1");
+        rtc_state.dhw_end_cool_pending = 1;
+        rtc_state.dhw_end_cool_start_ms = now_ms;
+        set_last_action_reason("dhw_end");
+        publish_derived_states();
+      } else {
+        meisha_send_command("SetOperationMode", "0");
+        if (rtc_state.hours_time_left < 0.1f) {
+          meisha_send_command("SetHeatpump", "0");
+        }
+        set_last_action_reason("dhw_end");
+        publish_derived_states();
+      }
+    }
+  } else if (op_mode != MEISHA_OPMODE_DHW_ONLY) {
+    rtc_state.dhw_end_fired = 0;
+    rtc_state.dhw_seen_valve_tank = (valve_state == MEISHA_VALVE_TANK) ? 1 : 0;
+    rtc_state.dhw_valve_room_timer_active = 0;
+    rtc_state.dhw_comp_off_timer_active = 0;
+  }
+
+  // Space heating control (when cooling_mode == off and not in DHW only)
+  if (!s_tunables.cooling_mode && op_mode != MEISHA_OPMODE_DHW_ONLY) {
     // 4-Hour Idle Shutoff (Turn Off) detection
     // Triggers when cooling_mode == off, hp_on, valve == Room, op_mode != DHW only,
     // and heat_pump_setpoint < 25.1 C held continuously for 4 hours (14,400,000 ms).
