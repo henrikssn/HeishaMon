@@ -29,6 +29,6 @@ jobs:
 
       - name: Compile and run MeishaController unit tests
         run: |
-          make -C tests clean
-          make -C tests test
+          make clean
+          make test
         shell: bash

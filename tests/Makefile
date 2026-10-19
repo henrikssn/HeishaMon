@@ -22,4 +22,10 @@ test: $(TARGETS)
 clean:
 	rm -f $(TARGETS) test_runner *.o ../HeishaMon/meisha.o
 
-.PHONY: all test clean
+build:
+	$(MAKE) -C .. build
+
+build-binary:
+	$(MAKE) -C .. build-binary
+
+.PHONY: all test clean build build-binary
