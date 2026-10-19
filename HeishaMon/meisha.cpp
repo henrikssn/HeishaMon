@@ -1418,7 +1418,8 @@ void meisha_loop(void) {
   bool fm_delta4_5m = rtc_state.fm_off_delta4_timer_active &&
                       ((now_ms - rtc_state.fm_off_delta4_since_ms) >= 300000UL);
 
-  if (quiet_mode_level != 0 && rtc_state.pipe_ambient_delta > 3.0f) {
+  if (quiet_mode_level != 0 && rtc_state.pipe_ambient_delta > 3.0f &&
+      outside_temp < 1.1f) {
     if (!rtc_state.fm_off_delta3_timer_active) {
       rtc_state.fm_off_delta3_timer_active = 1;
       rtc_state.fm_off_delta3_since_ms = now_ms;
@@ -1429,7 +1430,8 @@ void meisha_loop(void) {
   bool fm_delta3_5m = rtc_state.fm_off_delta3_timer_active &&
                       ((now_ms - rtc_state.fm_off_delta3_since_ms) >= 300000UL);
 
-  if (quiet_mode_level != 0 && outside_temp < 1.1f) {
+  if (quiet_mode_level != 0 && outside_temp < 1.1f &&
+      rtc_state.pipe_ambient_delta > 3.0f) {
     if (!rtc_state.fm_off_outside_timer_active) {
       rtc_state.fm_off_outside_timer_active = 1;
       rtc_state.fm_off_outside_since_ms = now_ms;

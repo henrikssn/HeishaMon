@@ -261,6 +261,57 @@ void test_quiet_mode_fm_off_triggers_and_guards() {
   meisha_loop();
   assert(g_mock_commands.empty());
 
+  // Guard D: In mild weather (outside_temp = 11 °C >= 1.1 °C), delta = 3.5 K held for > 5 min
+  // followed by a momentary spike to delta = 4.1 K MUST NOT trigger FM Off immediately
+  // (must wait 5 full minutes above 4.0 K).
+  reset_mock_environment();
+  Preferences::reset();
+  mock_corrupt_rtc_state();
+  set_mock_reset_reason(ESP_RST_POWERON);
+  set_mock_time(1762000000 + 5000);
+  meisha_setup();
+  meisha_set_control_mode(MEISHA_MODE_ACTIVE);
+  meisha_set_cooling_mode(true);
+  set_mock_topic_value(4, "1"); // Cool only
+
+  actData[0] = 0x71;
+  set_mock_topic_value(18, "1");    // Quiet mode = 1
+  set_mock_topic_value(14, "11.0"); // Outside_Temp = 11.0 °C (mild weather)
+  set_mock_topic_value(21, "7.5");  // Pipe temp = 7.5 °C (delta = 3.5 K: > 3.0 K)
+  set_mock_topic_value(8, "17.0");  // Compressor freq = 17.0 Hz (<= 25 Hz)
+  set_mock_topic_value(33, "23.0");
+
+  meisha_loop();
+  g_mock_commands.clear();
+
+  // Hold delta = 3.5 K for 6 minutes (360s)
+  advance_mock_time(360);
+  advance_mock_millis(360000UL);
+  meisha_loop();
+  assert(g_mock_commands.empty());
+
+  // Momentary spike to delta = 4.1 K (> 4.0 K)
+  set_mock_topic_value(21, "6.9"); // 11.0 - 6.9 = 4.1 K
+  advance_mock_time(1);
+  advance_mock_millis(1000UL);
+  meisha_loop();
+  // MUST NOT trigger FM Off immediately!
+  assert(g_mock_commands.empty());
+  assert(std::string(meisha_get_last_action_reason()) != "fm_off");
+
+  // Advance 4 more minutes at 4.1 K (total 241s < 300s): still inhibited
+  advance_mock_time(240);
+  advance_mock_millis(240000UL);
+  meisha_loop();
+  assert(g_mock_commands.empty());
+
+  // Drop back to 4.0 K: resets delta4 timer
+  set_mock_topic_value(21, "7.0"); // delta = 4.0 K (not > 4.0 K)
+  advance_mock_time(60);
+  advance_mock_millis(60000UL);
+  meisha_loop();
+  assert(g_mock_commands.empty());
+
   std::cout << "[PASS] test_quiet_mode_fm_off_triggers_and_guards" << std::endl;
 }
 
