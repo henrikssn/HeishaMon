@@ -1,9 +1,9 @@
 #include "meisha.h"
-#include <string.h>
-#include <stdio.h>
 #include <ctype.h>
-#include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #ifdef ARDUINO
@@ -14,28 +14,28 @@
 // Lightweight dummy Preferences stub for ESP8266 compile target in CI
 class Preferences {
 public:
-  bool begin(const char*, bool = false) { return true; }
+  bool begin(const char *, bool = false) { return true; }
   void end() {}
-  uint8_t getUChar(const char*, uint8_t def = 0) { return def; }
-  size_t putUChar(const char*, uint8_t) { return 1; }
-  float getFloat(const char*, float def = 0.0f) { return def; }
-  size_t putFloat(const char*, float) { return sizeof(float); }
-  bool getBool(const char*, bool def = false) { return def; }
-  size_t putBool(const char*, bool) { return 1; }
-  size_t getBytes(const char*, void*, size_t) { return 0; }
-  size_t putBytes(const char*, const void*, size_t len) { return len; }
+  uint8_t getUChar(const char *, uint8_t def = 0) { return def; }
+  size_t putUChar(const char *, uint8_t) { return 1; }
+  float getFloat(const char *, float def = 0.0f) { return def; }
+  size_t putFloat(const char *, float) { return sizeof(float); }
+  bool getBool(const char *, bool def = false) { return def; }
+  size_t putBool(const char *, bool) { return 1; }
+  size_t getBytes(const char *, void *, size_t) { return 0; }
+  size_t putBytes(const char *, const void *, size_t len) { return len; }
 };
 #endif
-#include <PubSubClient.h>
-#include "decode.h"
 #include "commands.h"
+#include "decode.h"
 #include "webfunctions.h"
+#include <PubSubClient.h>
 
 extern char actData[DATASIZE];
 extern settingsStruct heishamonSettings;
 extern PubSubClient mqtt_client;
-extern bool send_command(byte* command, int length);
-extern void log_message(char* string);
+extern bool send_command(byte *command, int length);
+extern void log_message(char *string);
 #else
 #include "../tests/mock_heishamon.h"
 #define time mock_time
@@ -51,11 +51,11 @@ static MeishaRtcState rtc_state;
 
 static MeishaControlMode s_control_mode = MEISHA_MODE_SHADOW;
 static MeishaTunables s_tunables = {
-  23.0f, // room_target (18..25)
-  14.0f, // heating_curve_start (12..20)
-  0.8f,  // heating_curve_angle (0.2..1.5)
-  9,     // heating_start_hour (0..23)
-  false  // cooling_mode
+    23.0f, // room_target (18..25)
+    14.0f, // heating_curve_start (12..20)
+    0.8f,  // heating_curve_angle (0.2..1.5)
+    9,     // heating_start_hour (0..23)
+    false  // cooling_mode
 };
 
 static Preferences s_prefs;
@@ -69,13 +69,9 @@ static bool s_checkpoint_started = false;
 static bool s_integral_started = false;
 static bool s_pid_started = false;
 
-static inline float round1(float val) {
-  return roundf(val * 10.0f) / 10.0f;
-}
+static inline float round1(float val) { return roundf(val * 10.0f) / 10.0f; }
 
-static inline float round2(float val) {
-  return roundf(val * 100.0f) / 100.0f;
-}
+static inline float round2(float val) { return roundf(val * 100.0f) / 100.0f; }
 
 static inline float clampf(float val, float min_val, float max_val) {
   return (val < min_val) ? min_val : ((val > max_val) ? max_val : val);
@@ -86,10 +82,12 @@ enum MeishaValveState : uint8_t {
   MEISHA_VALVE_TANK = 1
 };
 
-static MeishaValveState parse_valve_state(const String& val_str) {
-  const char* s = val_str.c_str();
-  if (!s || s[0] == '\0') return MEISHA_VALVE_ROOM;
-  if (strcasecmp(s, "1") == 0 || strcasecmp(s, "tank") == 0 || strcasecmp(s, "dhw") == 0) {
+static MeishaValveState parse_valve_state(const String &val_str) {
+  const char *s = val_str.c_str();
+  if (!s || s[0] == '\0')
+    return MEISHA_VALVE_ROOM;
+  if (strcasecmp(s, "1") == 0 || strcasecmp(s, "tank") == 0 ||
+      strcasecmp(s, "dhw") == 0) {
     return MEISHA_VALVE_TANK;
   }
   return MEISHA_VALVE_ROOM;
@@ -99,39 +97,49 @@ enum MeishaOpMode {
   MEISHA_OPMODE_HEAT_ONLY = 0,
   MEISHA_OPMODE_COOL_ONLY = 1,
   MEISHA_OPMODE_AUTO_HEAT = 2,
-  MEISHA_OPMODE_DHW_ONLY  = 3,
-  MEISHA_OPMODE_HEAT_DHW  = 4,
-  MEISHA_OPMODE_COOL_DHW  = 5,
-  MEISHA_OPMODE_AUTO_DHW  = 6,
-  MEISHA_OPMODE_UNKNOWN   = -1
+  MEISHA_OPMODE_DHW_ONLY = 3,
+  MEISHA_OPMODE_HEAT_DHW = 4,
+  MEISHA_OPMODE_COOL_DHW = 5,
+  MEISHA_OPMODE_AUTO_DHW = 6,
+  MEISHA_OPMODE_UNKNOWN = -1
 };
 
-static MeishaOpMode parse_op_mode(const String& val) {
-  const char* s = val.c_str();
-  if (!s || s[0] == '\0') return MEISHA_OPMODE_UNKNOWN;
-  if (strcmp(s, "0") == 0 || strcasecmp(s, "Heat") == 0 || strcasecmp(s, "Heat only") == 0) {
+static MeishaOpMode parse_op_mode(const String &val) {
+  const char *s = val.c_str();
+  if (!s || s[0] == '\0')
+    return MEISHA_OPMODE_UNKNOWN;
+  if (strcmp(s, "0") == 0 || strcasecmp(s, "Heat") == 0 ||
+      strcasecmp(s, "Heat only") == 0) {
     return MEISHA_OPMODE_HEAT_ONLY;
   }
-  if (strcmp(s, "1") == 0 || strcasecmp(s, "Cool") == 0 || strcasecmp(s, "Cool only") == 0) {
+  if (strcmp(s, "1") == 0 || strcasecmp(s, "Cool") == 0 ||
+      strcasecmp(s, "Cool only") == 0) {
     return MEISHA_OPMODE_COOL_ONLY;
   }
-  if (strcmp(s, "3") == 0 || strcasecmp(s, "DHW") == 0 || strcasecmp(s, "DHW only") == 0) {
+  if (strcmp(s, "3") == 0 || strcasecmp(s, "DHW") == 0 ||
+      strcasecmp(s, "DHW only") == 0) {
     return MEISHA_OPMODE_DHW_ONLY;
   }
-  if (strcmp(s, "2") == 0) return MEISHA_OPMODE_AUTO_HEAT;
-  if (strcmp(s, "4") == 0) return MEISHA_OPMODE_HEAT_DHW;
-  if (strcmp(s, "5") == 0) return MEISHA_OPMODE_COOL_DHW;
-  if (strcmp(s, "6") == 0) return MEISHA_OPMODE_AUTO_DHW;
+  if (strcmp(s, "2") == 0)
+    return MEISHA_OPMODE_AUTO_HEAT;
+  if (strcmp(s, "4") == 0)
+    return MEISHA_OPMODE_HEAT_DHW;
+  if (strcmp(s, "5") == 0)
+    return MEISHA_OPMODE_COOL_DHW;
+  if (strcmp(s, "6") == 0)
+    return MEISHA_OPMODE_AUTO_DHW;
   return MEISHA_OPMODE_UNKNOWN;
 }
 
-static bool parse_hp_on(const String& val) {
-  const char* s = val.c_str();
-  if (!s || s[0] == '\0') return false;
-  return (strcmp(s, "1") == 0 || strcasecmp(s, "on") == 0 || strcasecmp(s, "true") == 0);
+static bool parse_hp_on(const String &val) {
+  const char *s = val.c_str();
+  if (!s || s[0] == '\0')
+    return false;
+  return (strcmp(s, "1") == 0 || strcasecmp(s, "on") == 0 ||
+          strcasecmp(s, "true") == 0);
 }
 
-static uint32_t calculate_crc32(const uint8_t* data, size_t length) {
+static uint32_t calculate_crc32(const uint8_t *data, size_t length) {
   uint32_t crc = 0xFFFFFFFF;
   for (size_t i = 0; i < length; i++) {
     crc ^= data[i];
@@ -146,21 +154,27 @@ static uint32_t calculate_crc32(const uint8_t* data, size_t length) {
   return ~crc;
 }
 
-static uint32_t rtc_crc(const MeishaRtcState* state) {
-  return calculate_crc32((const uint8_t*)state, offsetof(MeishaRtcState, crc32));
+static uint32_t rtc_crc(const MeishaRtcState *state) {
+  return calculate_crc32((const uint8_t *)state,
+                         offsetof(MeishaRtcState, crc32));
 }
 
-static const char* mode_to_string(MeishaControlMode mode) {
+static const char *mode_to_string(MeishaControlMode mode) {
   switch (mode) {
-    case MEISHA_MODE_OFF: return "Off";
-    case MEISHA_MODE_SHADOW: return "Shadow";
-    case MEISHA_MODE_ACTIVE: return "Active";
-    default: return "Shadow";
+  case MEISHA_MODE_OFF:
+    return "Off";
+  case MEISHA_MODE_SHADOW:
+    return "Shadow";
+  case MEISHA_MODE_ACTIVE:
+    return "Active";
+  default:
+    return "Shadow";
   }
 }
 
-static bool parse_mode_string(const char* str, MeishaControlMode* out_mode) {
-  if (!str) return false;
+static bool parse_mode_string(const char *str, MeishaControlMode *out_mode) {
+  if (!str)
+    return false;
   if (strcasecmp(str, "off") == 0) {
     *out_mode = MEISHA_MODE_OFF;
     return true;
@@ -184,28 +198,34 @@ static void ensure_prefs_opened(void) {
 }
 
 static int32_t get_heating_day_id(time_t epoch, uint8_t start_hour) {
-  // Shifting backward by start_hour puts the entire heating day into the same calendar day
+  // Shifting backward by start_hour puts the entire heating day into the same
+  // calendar day
   time_t shifted = epoch - (time_t)start_hour * 3600;
-  struct tm* tm_val = localtime(&shifted);
-  if (!tm_val) return 0;
-  return (tm_val->tm_year + 1900) * 10000 + (tm_val->tm_mon + 1) * 100 + tm_val->tm_mday;
+  struct tm *tm_val = localtime(&shifted);
+  if (!tm_val)
+    return 0;
+  return (tm_val->tm_year + 1900) * 10000 + (tm_val->tm_mon + 1) * 100 +
+         tm_val->tm_mday;
 }
 
 static void publish_mode_state(void) {
   char topic[256];
-  snprintf(topic, sizeof(topic), "%s/meisha/state/control_mode", heishamonSettings.mqtt_topic_base);
+  snprintf(topic, sizeof(topic), "%s/meisha/state/control_mode",
+           heishamonSettings.mqtt_topic_base);
   mqtt_client.publish(topic, mode_to_string(s_control_mode), true);
 }
 
-static void publish_tunable_state(const char* name, const char* val) {
+static void publish_tunable_state(const char *name, const char *val) {
   char topic[256];
-  snprintf(topic, sizeof(topic), "%s/meisha/state/%s", heishamonSettings.mqtt_topic_base, name);
+  snprintf(topic, sizeof(topic), "%s/meisha/state/%s",
+           heishamonSettings.mqtt_topic_base, name);
   mqtt_client.publish(topic, val, true);
 }
 
-static void publish_sensor_float(const char* name, float val, int decimals) {
+static void publish_sensor_float(const char *name, float val, int decimals) {
   char topic[256];
-  snprintf(topic, sizeof(topic), "%s/meisha/state/%s", heishamonSettings.mqtt_topic_base, name);
+  snprintf(topic, sizeof(topic), "%s/meisha/state/%s",
+           heishamonSettings.mqtt_topic_base, name);
   char buf[32];
   snprintf(buf, sizeof(buf), "%.*f", decimals, val);
   mqtt_client.publish(topic, buf, true);
@@ -236,17 +256,20 @@ static void publish_rolling_average_states(void) {
   publish_sensor_float("room_temp_snapshot", rtc_state.room_temp_snapshot, 1);
 }
 
-static void publish_sensor_int(const char* name, int val) {
+static void publish_sensor_int(const char *name, int val) {
   char topic[256];
-  snprintf(topic, sizeof(topic), "%s/meisha/state/%s", heishamonSettings.mqtt_topic_base, name);
+  snprintf(topic, sizeof(topic), "%s/meisha/state/%s",
+           heishamonSettings.mqtt_topic_base, name);
   char buf[32];
   snprintf(buf, sizeof(buf), "%d", val);
   mqtt_client.publish(topic, buf, true);
 }
 
 static bool is_change_lock_active(uint32_t now_ms) {
-  if (!rtc_state.change_lock_active) return false;
-  if ((now_ms - rtc_state.change_lock_set_ms) < rtc_state.change_lock_duration_ms) {
+  if (!rtc_state.change_lock_active)
+    return false;
+  if ((now_ms - rtc_state.change_lock_set_ms) <
+      rtc_state.change_lock_duration_ms) {
     return true;
   }
   rtc_state.change_lock_active = 0;
@@ -264,17 +287,20 @@ static void update_change_lock_remaining(uint32_t now_ms) {
   if (is_change_lock_active(now_ms)) {
     uint32_t elapsed = now_ms - rtc_state.change_lock_set_ms;
     uint32_t remaining = (elapsed < rtc_state.change_lock_duration_ms)
-                         ? (rtc_state.change_lock_duration_ms - elapsed) : 0;
+                             ? (rtc_state.change_lock_duration_ms - elapsed)
+                             : 0;
     rtc_state.change_lock_remaining_min = round1((float)remaining / 60000.0f);
   } else {
     rtc_state.change_lock_remaining_min = 0.0f;
   }
 }
 
-static void set_last_action_reason(const char* reason) {
+static void set_last_action_reason(const char *reason) {
   if (reason) {
-    strncpy(rtc_state.last_action_reason, reason, sizeof(rtc_state.last_action_reason) - 1);
-    rtc_state.last_action_reason[sizeof(rtc_state.last_action_reason) - 1] = '\0';
+    strncpy(rtc_state.last_action_reason, reason,
+            sizeof(rtc_state.last_action_reason) - 1);
+    rtc_state.last_action_reason[sizeof(rtc_state.last_action_reason) - 1] =
+        '\0';
     publish_tunable_state("last_action_reason", rtc_state.last_action_reason);
   }
 }
@@ -289,16 +315,22 @@ static void publish_derived_states(void) {
   publish_sensor_float("dhw_time", rtc_state.dhw_time, 2);
   publish_sensor_float("hours_target", rtc_state.hours_target, 2);
   publish_sensor_float("hours_time_left", rtc_state.hours_time_left, 2);
-  publish_tunable_state("compressor_running", rtc_state.compressor_running ? "ON" : "OFF");
-  publish_sensor_float("change_lock_remaining_min", rtc_state.change_lock_remaining_min, 1);
-  publish_tunable_state("last_action_reason", rtc_state.last_action_reason[0] ? rtc_state.last_action_reason : "idle");
+  publish_tunable_state("compressor_running",
+                        rtc_state.compressor_running ? "ON" : "OFF");
+  publish_sensor_float("change_lock_remaining_min",
+                       rtc_state.change_lock_remaining_min, 1);
+  publish_tunable_state("last_action_reason", rtc_state.last_action_reason[0]
+                                                  ? rtc_state.last_action_reason
+                                                  : "idle");
 }
 
 static void publish_ha_discovery(void) {
-  meisha_publish_discovery_table(mqtt_client, heishamonSettings.mqtt_topic_base, mqtt_willtopic);
+  meisha_publish_discovery_table(mqtt_client, heishamonSettings.mqtt_topic_base,
+                                 mqtt_willtopic);
 }
 
-static void fill_ring_buffer(int16_t* buf, uint16_t capacity, uint16_t* head, uint16_t* count, float val) {
+static void fill_ring_buffer(int16_t *buf, uint16_t capacity, uint16_t *head,
+                             uint16_t *count, float val) {
   int16_t deci = (int16_t)roundf(val * 10.0f);
   for (uint16_t i = 0; i < capacity; i++) {
     buf[i] = deci;
@@ -307,7 +339,8 @@ static void fill_ring_buffer(int16_t* buf, uint16_t capacity, uint16_t* head, ui
   *count = capacity;
 }
 
-static void push_ring_sample(int16_t* buf, uint16_t capacity, uint16_t* head, uint16_t* count, float val) {
+static void push_ring_sample(int16_t *buf, uint16_t capacity, uint16_t *head,
+                             uint16_t *count, float val) {
   int16_t deci = (int16_t)roundf(val * 10.0f);
   buf[*head] = deci;
   *head = (*head + 1) % capacity;
@@ -316,8 +349,9 @@ static void push_ring_sample(int16_t* buf, uint16_t capacity, uint16_t* head, ui
   }
 }
 
-static float calc_ring_mean(const int16_t* buf, uint16_t count) {
-  if (count == 0) return 0.0f;
+static float calc_ring_mean(const int16_t *buf, uint16_t count) {
+  if (count == 0)
+    return 0.0f;
   int32_t sum = 0;
   for (uint16_t i = 0; i < count; i++) {
     sum += buf[i];
@@ -340,36 +374,25 @@ static void write_nvs_checkpoint(void) {
   s_prefs.putBytes("chkpt", &chkpt, sizeof(chkpt));
 }
 
-MeishaControlMode meisha_get_control_mode(void) {
-  return s_control_mode;
-}
+MeishaControlMode meisha_get_control_mode(void) { return s_control_mode; }
 
-const MeishaRtcState* meisha_get_rtc_state(void) {
-  return &rtc_state;
-}
+const MeishaRtcState *meisha_get_rtc_state(void) { return &rtc_state; }
 
-MeishaTunables meisha_get_tunables(void) {
-  return s_tunables;
-}
+MeishaTunables meisha_get_tunables(void) { return s_tunables; }
 
-float meisha_get_ambient_1h(void) {
-  return rtc_state.ambient_1h_mean;
-}
+float meisha_get_ambient_1h(void) { return rtc_state.ambient_1h_mean; }
 
-float meisha_get_ambient_24h(void) {
-  return rtc_state.ambient_24h_mean;
-}
+float meisha_get_ambient_24h(void) { return rtc_state.ambient_24h_mean; }
 
-float meisha_get_room_temp_6h(void) {
-  return rtc_state.room_temp_6h_mean;
-}
+float meisha_get_room_temp_6h(void) { return rtc_state.room_temp_6h_mean; }
 
 float meisha_get_room_temp_snapshot(void) {
   return rtc_state.room_temp_snapshot;
 }
 
 bool meisha_set_room_target(float val) {
-  if (val < 18.0f || val > 25.0f) return false;
+  if (val < 18.0f || val > 25.0f)
+    return false;
   if (fabsf(s_tunables.room_target - val) > 1e-4f) {
     s_tunables.room_target = val;
     ensure_prefs_opened();
@@ -382,7 +405,8 @@ bool meisha_set_room_target(float val) {
 }
 
 bool meisha_set_heating_curve_start(float val) {
-  if (val < 12.0f || val > 20.0f) return false;
+  if (val < 12.0f || val > 20.0f)
+    return false;
   if (fabsf(s_tunables.heating_curve_start - val) > 1e-4f) {
     s_tunables.heating_curve_start = val;
     ensure_prefs_opened();
@@ -395,7 +419,8 @@ bool meisha_set_heating_curve_start(float val) {
 }
 
 bool meisha_set_heating_curve_angle(float val) {
-  if (val < 0.2f || val > 1.5f) return false;
+  if (val < 0.2f || val > 1.5f)
+    return false;
   if (fabsf(s_tunables.heating_curve_angle - val) > 1e-4f) {
     s_tunables.heating_curve_angle = val;
     ensure_prefs_opened();
@@ -408,7 +433,8 @@ bool meisha_set_heating_curve_angle(float val) {
 }
 
 bool meisha_set_heating_start_hour(uint8_t val) {
-  if (val > 23) return false;
+  if (val > 23)
+    return false;
   if (s_tunables.heating_start_hour != val) {
     s_tunables.heating_start_hour = val;
     ensure_prefs_opened();
@@ -426,6 +452,23 @@ bool meisha_set_cooling_mode(bool val) {
     ensure_prefs_opened();
     s_prefs.putBool("cool_mode", val);
     publish_tunable_state("cooling_mode", val ? "ON" : "OFF");
+
+    if (val) {
+      // Switched to cooling mode: clear in-flight winter sequences and timers
+      rtc_state.day_mode_pending = 0;
+      rtc_state.turn_off_pending = 0;
+      rtc_state.low_setpoint_timer_active = 0;
+      rtc_state.idle_shutoff_fired = 0;
+      rtc_state.night_mode_sent = 0;
+      rtc_state.overshoot_timer_active = 0;
+      rtc_state.overshoot_steps_fired = 0;
+    } else {
+      // Switched to heating mode: clear in-flight cooling sequences and timers
+      rtc_state.cool_start_pending = 0;
+      rtc_state.cool_low_ambient_timer_active = 0;
+      rtc_state.cool_low_ambient_fired = 0;
+    }
+    rtc_state.crc32 = rtc_crc(&rtc_state);
   }
   return true;
 }
@@ -439,12 +482,13 @@ void meisha_set_control_mode(MeishaControlMode mode) {
   }
 }
 
-bool meisha_send_command(const char* cmd, const char* value) {
+bool meisha_send_command(const char *cmd, const char *value) {
   if (s_control_mode != MEISHA_MODE_ACTIVE) {
     return false;
   }
 #if defined(ARDUINO) || defined(MOCK_HEISHAMON)
-  send_heatpump_command((char*)cmd, (char*)value, send_command, log_message, heishamonSettings.optionalPCB);
+  send_heatpump_command((char *)cmd, (char *)value, send_command, log_message,
+                        heishamonSettings.optionalPCB);
   return true;
 #else
   return false;
@@ -461,7 +505,8 @@ void meisha_setup(void) {
   s_tunables.heating_start_hour = s_prefs.getUChar("start_hr", 9);
   s_tunables.cooling_mode = s_prefs.getBool("cool_mode", false);
 
-  bool rtc_valid = (rtc_state.magic == MEISHA_RTC_MAGIC) && (rtc_crc(&rtc_state) == rtc_state.crc32);
+  bool rtc_valid = (rtc_state.magic == MEISHA_RTC_MAGIC) &&
+                   (rtc_crc(&rtc_state) == rtc_state.crc32);
 
   if (!rtc_valid) {
     // SRAM lost across cold power loss or first boot
@@ -470,25 +515,31 @@ void meisha_setup(void) {
     rtc_state.version = 2;
 
     MeishaNvsCheckpoint chkpt;
-    bool has_chkpt = (s_prefs.getBytes("chkpt", &chkpt, sizeof(chkpt)) == sizeof(chkpt));
+    bool has_chkpt =
+        (s_prefs.getBytes("chkpt", &chkpt, sizeof(chkpt)) == sizeof(chkpt));
     time_t now = time(NULL);
 
     if (has_chkpt && now > 1000000 && chkpt.saved_at_epoch > 0 &&
-        now >= chkpt.saved_at_epoch && (now - chkpt.saved_at_epoch) < 6 * 3600) {
+        now >= chkpt.saved_at_epoch &&
+        (now - chkpt.saved_at_epoch) < 6 * 3600) {
       // Warm recovery (< 6h old checkpoint)
       fill_ring_buffer(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
-                       &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count, chkpt.ambient_1h_mean);
+                       &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count,
+                       chkpt.ambient_1h_mean);
       fill_ring_buffer(rtc_state.ambient_24h_buf, MEISHA_AMBIENT_24H_SAMPLES,
-                       &rtc_state.ambient_24h_head, &rtc_state.ambient_24h_count, chkpt.ambient_24h_mean);
+                       &rtc_state.ambient_24h_head,
+                       &rtc_state.ambient_24h_count, chkpt.ambient_24h_mean);
       fill_ring_buffer(rtc_state.room_6h_buf, MEISHA_ROOM_6H_SAMPLES,
-                       &rtc_state.room_6h_head, &rtc_state.room_6h_count, chkpt.room_temp_6h_mean);
+                       &rtc_state.room_6h_head, &rtc_state.room_6h_count,
+                       chkpt.room_temp_6h_mean);
 
       rtc_state.ambient_1h_mean = chkpt.ambient_1h_mean;
       rtc_state.ambient_24h_mean = chkpt.ambient_24h_mean;
       rtc_state.room_temp_6h_mean = chkpt.room_temp_6h_mean;
       rtc_state.pid_output = chkpt.pid_output;
 
-      int32_t saved_day = get_heating_day_id((time_t)chkpt.saved_at_epoch, s_tunables.heating_start_hour);
+      int32_t saved_day = get_heating_day_id((time_t)chkpt.saved_at_epoch,
+                                             s_tunables.heating_start_hour);
       int32_t now_day = get_heating_day_id(now, s_tunables.heating_start_hour);
       if (saved_day == now_day) {
         rtc_state.degree_hours_day = chkpt.degree_hours_day;
@@ -520,17 +571,19 @@ void meisha_setup(void) {
     if (rtc_state.dhw_start_pending && millis() < rtc_state.dhw_start_ms) {
       rtc_state.dhw_start_pending = 0;
     }
-    if (rtc_state.dhw_end_cool_pending && millis() < rtc_state.dhw_end_cool_start_ms) {
+    if (rtc_state.dhw_end_cool_pending &&
+        millis() < rtc_state.dhw_end_cool_start_ms) {
       rtc_state.dhw_end_cool_pending = 0;
+    }
+    if (rtc_state.cool_start_pending && millis() < rtc_state.cool_start_ms) {
+      rtc_state.cool_start_pending = 0;
     }
   }
 
 #if defined(ESP32) || defined(MOCK_HEISHAMON)
   esp_reset_reason_t reason = esp_reset_reason();
-  bool is_crash = (reason == ESP_RST_PANIC ||
-                   reason == ESP_RST_INT_WDT ||
-                   reason == ESP_RST_TASK_WDT ||
-                   reason == ESP_RST_WDT);
+  bool is_crash = (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT ||
+                   reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT);
 #else
   bool is_crash = false;
 #endif
@@ -556,7 +609,8 @@ void meisha_setup(void) {
   s_last_integral_ms = 0;
   s_last_pid_ms = 0;
 
-  uint8_t stored_mode = s_prefs.getUChar("ctrl_mode", (uint8_t)MEISHA_MODE_SHADOW);
+  uint8_t stored_mode =
+      s_prefs.getUChar("ctrl_mode", (uint8_t)MEISHA_MODE_SHADOW);
   if (stored_mode <= (uint8_t)MEISHA_MODE_ACTIVE) {
     s_control_mode = (MeishaControlMode)stored_mode;
   } else {
@@ -565,7 +619,8 @@ void meisha_setup(void) {
 }
 
 void meisha_loop(void) {
-  // Clear crash counter after 5 minutes of continuous stable uptime (300,000 ms)
+  // Clear crash counter after 5 minutes of continuous stable uptime (300,000
+  // ms)
   if (millis() >= 300000UL && rtc_state.crash_count > 0) {
     rtc_state.crash_count = 0;
     rtc_state.crc32 = rtc_crc(&rtc_state);
@@ -583,7 +638,8 @@ void meisha_loop(void) {
 
   float outside_temp = getDataValue(actData, 14).toFloat();
   String room_str = getDataValue(actData, 33);
-  float room_temp = room_str.length() > 0 ? room_str.toFloat() : s_tunables.room_target;
+  float room_temp =
+      room_str.length() > 0 ? room_str.toFloat() : s_tunables.room_target;
   if (room_temp <= -40.0f || room_temp == 0.0f) {
     room_temp = s_tunables.room_target;
   }
@@ -612,7 +668,8 @@ void meisha_loop(void) {
   int hp_setpoint_int = (int)hp_setpoint;
   int z1_temp_int = (int)z1_temp;
 
-  // Compressor running hysteresis (10 Hz upper threshold, 2 Hz hysteresis: >12 Hz on, <8 Hz off)
+  // Compressor running hysteresis (10 Hz upper threshold, 2 Hz hysteresis: >12
+  // Hz on, <8 Hz off)
   if (compressor_freq > 12.0f) {
     rtc_state.compressor_running = 1;
   } else if (compressor_freq < 8.0f) {
@@ -624,11 +681,14 @@ void meisha_loop(void) {
   // Live seeding on cold start
   if (rtc_state.seeded == 0) {
     fill_ring_buffer(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
-                     &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count, outside_temp);
+                     &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count,
+                     outside_temp);
     fill_ring_buffer(rtc_state.ambient_24h_buf, MEISHA_AMBIENT_24H_SAMPLES,
-                     &rtc_state.ambient_24h_head, &rtc_state.ambient_24h_count, outside_temp);
+                     &rtc_state.ambient_24h_head, &rtc_state.ambient_24h_count,
+                     outside_temp);
     fill_ring_buffer(rtc_state.room_6h_buf, MEISHA_ROOM_6H_SAMPLES,
-                     &rtc_state.room_6h_head, &rtc_state.room_6h_count, room_temp);
+                     &rtc_state.room_6h_head, &rtc_state.room_6h_count,
+                     room_temp);
 
     rtc_state.ambient_1h_mean = outside_temp;
     rtc_state.ambient_24h_mean = outside_temp;
@@ -638,12 +698,19 @@ void meisha_loop(void) {
     rtc_state.seeded = 1;
 
     // Initial curve target & power target
-    float curve_ambient = round2(s_tunables.room_target + (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) * s_tunables.heating_curve_angle);
-    float room_offset = clampf(s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
-    rtc_state.curve_target = round2(curve_ambient + room_offset * s_tunables.heating_curve_angle);
-    rtc_state.degree_hours_target = 24.0f * (rtc_state.curve_target - s_tunables.room_target);
+    float curve_ambient =
+        round2(s_tunables.room_target +
+               (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) *
+                   s_tunables.heating_curve_angle);
+    float room_offset = clampf(
+        s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
+    rtc_state.curve_target =
+        round2(curve_ambient + room_offset * s_tunables.heating_curve_angle);
+    rtc_state.degree_hours_target =
+        24.0f * (rtc_state.curve_target - s_tunables.room_target);
 
-    float raw_power = fmaxf(27.0f, rtc_state.curve_target - rtc_state.pid_output);
+    float raw_power =
+        fmaxf(27.0f, rtc_state.curve_target - rtc_state.pid_output);
     rtc_state.power_target = (int16_t)roundf(raw_power);
 
     s_sampled_once = true;
@@ -665,20 +732,26 @@ void meisha_loop(void) {
     s_last_sample_ms = now_ms;
 
     push_ring_sample(rtc_state.ambient_1h_buf, MEISHA_AMBIENT_1H_SAMPLES,
-                     &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count, outside_temp);
+                     &rtc_state.ambient_1h_head, &rtc_state.ambient_1h_count,
+                     outside_temp);
     push_ring_sample(rtc_state.room_6h_buf, MEISHA_ROOM_6H_SAMPLES,
-                     &rtc_state.room_6h_head, &rtc_state.room_6h_count, room_temp);
+                     &rtc_state.room_6h_head, &rtc_state.room_6h_count,
+                     room_temp);
 
     rtc_state.ambient_24h_sub_ticks++;
     if (rtc_state.ambient_24h_sub_ticks >= 5) {
       push_ring_sample(rtc_state.ambient_24h_buf, MEISHA_AMBIENT_24H_SAMPLES,
-                       &rtc_state.ambient_24h_head, &rtc_state.ambient_24h_count, outside_temp);
+                       &rtc_state.ambient_24h_head,
+                       &rtc_state.ambient_24h_count, outside_temp);
       rtc_state.ambient_24h_sub_ticks = 0;
     }
 
-    rtc_state.ambient_1h_mean = calc_ring_mean(rtc_state.ambient_1h_buf, rtc_state.ambient_1h_count);
-    rtc_state.ambient_24h_mean = calc_ring_mean(rtc_state.ambient_24h_buf, rtc_state.ambient_24h_count);
-    rtc_state.room_temp_6h_mean = calc_ring_mean(rtc_state.room_6h_buf, rtc_state.room_6h_count);
+    rtc_state.ambient_1h_mean =
+        calc_ring_mean(rtc_state.ambient_1h_buf, rtc_state.ambient_1h_count);
+    rtc_state.ambient_24h_mean =
+        calc_ring_mean(rtc_state.ambient_24h_buf, rtc_state.ambient_24h_count);
+    rtc_state.room_temp_6h_mean =
+        calc_ring_mean(rtc_state.room_6h_buf, rtc_state.room_6h_count);
     rtc_state.crc32 = rtc_crc(&rtc_state);
 
     publish_rolling_average_states();
@@ -686,14 +759,21 @@ void meisha_loop(void) {
   }
 
   // Continuous curve target & degree-hour budget calculation
-  float curve_ambient = round2(s_tunables.room_target + (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) * s_tunables.heating_curve_angle);
-  float room_offset = clampf(s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
-  rtc_state.curve_target = round2(curve_ambient + room_offset * s_tunables.heating_curve_angle);
-  rtc_state.degree_hours_target = 24.0f * (rtc_state.curve_target - s_tunables.room_target);
+  float curve_ambient =
+      round2(s_tunables.room_target +
+             (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) *
+                 s_tunables.heating_curve_angle);
+  float room_offset = clampf(
+      s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
+  rtc_state.curve_target =
+      round2(curve_ambient + room_offset * s_tunables.heating_curve_angle);
+  rtc_state.degree_hours_target =
+      24.0f * (rtc_state.curve_target - s_tunables.room_target);
 
   // Continuous integration of room_delta into degree_hours_day and dhw_time
   rtc_state.room_delta = (pump_flow > 0.0f && valve_state == MEISHA_VALVE_ROOM)
-                         ? (main_outlet_temp - s_tunables.room_target) : 0.0f;
+                             ? (main_outlet_temp - s_tunables.room_target)
+                             : 0.0f;
   if (!s_integral_started) {
     s_integral_started = true;
     s_last_integral_ms = now_ms;
@@ -719,9 +799,11 @@ void meisha_loop(void) {
       s_last_pid_ms = now_ms;
       float dt_pid_sec = (float)dt_pid_ms / 1000.0f;
       float curve_error = (pump_flow > 0.0f && valve_state == MEISHA_VALVE_ROOM)
-                          ? (rtc_state.curve_target - main_outlet_temp) : 0.0f;
+                              ? (rtc_state.curve_target - main_outlet_temp)
+                              : 0.0f;
       float pid_error = -curve_error;
-      rtc_state.pid_output = clampf(rtc_state.pid_output + 5e-5f * dt_pid_sec * pid_error, -1.0f, 1.0f);
+      rtc_state.pid_output = clampf(
+          rtc_state.pid_output + 5e-5f * dt_pid_sec * pid_error, -1.0f, 1.0f);
     }
   }
 
@@ -732,27 +814,37 @@ void meisha_loop(void) {
   if (rtc_state.power_target < 27) {
     rtc_state.power_target = (int16_t)roundf(raw_power);
   } else {
-    if (rtc_state.power_target < lo) rtc_state.power_target = lo;
-    else if (rtc_state.power_target > hi) rtc_state.power_target = hi;
+    if (rtc_state.power_target < lo)
+      rtc_state.power_target = lo;
+    else if (rtc_state.power_target > hi)
+      rtc_state.power_target = hi;
   }
 
   // Remaining schedule hours (hours_target & hours_time_left)
   float denom = 30.0f - s_tunables.room_target;
-  rtc_state.hours_target = (fabsf(denom) > 1e-4f)
-                           ? clampf((rtc_state.curve_target - s_tunables.room_target) / denom * 24.0f, 0.0f, 24.0f)
-                           : 24.0f;
+  rtc_state.hours_target =
+      (fabsf(denom) > 1e-4f)
+          ? clampf((rtc_state.curve_target - s_tunables.room_target) / denom *
+                       24.0f,
+                   0.0f, 24.0f)
+          : 24.0f;
 
   bool in_pre_start_blackout = false;
   bool dhw_start_triggered = false;
   time_t now = time(NULL);
-  struct tm* tm_ptr = localtime(&now);
+  struct tm *tm_ptr = localtime(&now);
   if (tm_ptr) {
     struct tm local_tm = *tm_ptr;
-    int hours_diff = (local_tm.tm_hour - (int)s_tunables.heating_start_hour + 24) % 24;
-    float hours_elapsed = (float)hours_diff + (float)local_tm.tm_min / 60.0f + (float)local_tm.tm_sec / 3600.0f;
-    rtc_state.hours_time_left = fmaxf(0.0f, fminf(24.0f, rtc_state.hours_target + rtc_state.dhw_time) - hours_elapsed);
+    int hours_diff =
+        (local_tm.tm_hour - (int)s_tunables.heating_start_hour + 24) % 24;
+    float hours_elapsed = (float)hours_diff + (float)local_tm.tm_min / 60.0f +
+                          (float)local_tm.tm_sec / 3600.0f;
+    rtc_state.hours_time_left =
+        fmaxf(0.0f, fminf(24.0f, rtc_state.hours_target + rtc_state.dhw_time) -
+                        hours_elapsed);
 
-    int hours_until_start = ((int)s_tunables.heating_start_hour - local_tm.tm_hour + 24) % 24;
+    int hours_until_start =
+        ((int)s_tunables.heating_start_hour - local_tm.tm_hour + 24) % 24;
     in_pre_start_blackout = (hours_until_start == 1 || hours_until_start == 2);
 
     // Daily 14:00 DHW Schedule Trigger
@@ -760,43 +852,90 @@ void meisha_loop(void) {
     if (local_tm.tm_hour == 14 && local_tm.tm_min == 0) {
       if (rtc_state.last_dhw_schedule_day_id != current_cal_day_id) {
         rtc_state.last_dhw_schedule_day_id = current_cal_day_id;
-        if (valve_state != MEISHA_VALVE_TANK && dhw_temp < 45.0f && !rtc_state.dhw_start_pending && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+        if (valve_state != MEISHA_VALVE_TANK && dhw_temp < 45.0f &&
+            !rtc_state.dhw_start_pending && op_mode != MEISHA_OPMODE_DHW_ONLY) {
           dhw_start_triggered = true;
         }
       }
     }
 
+    // Daily 08:00 Cool Turn On Trigger
+    if (local_tm.tm_hour == 8 && local_tm.tm_min == 0) {
+      if (rtc_state.last_cool_start_day_id != current_cal_day_id) {
+        rtc_state.last_cool_start_day_id = current_cal_day_id;
+        if (s_tunables.cooling_mode && rtc_state.ambient_24h_mean > 24.0f &&
+            op_mode != MEISHA_OPMODE_DHW_ONLY) {
+          meisha_send_command("SetOperationMode", "1");
+          rtc_state.cool_start_pending = 1;
+          rtc_state.cool_start_ms = now_ms;
+          set_last_action_reason("cool_turn_on");
+          publish_derived_states();
+        }
+      }
+    }
+
+    // Daily 20:00 Cool Turn Off Trigger
+    if (local_tm.tm_hour == 20 && local_tm.tm_min == 0) {
+      if (rtc_state.last_cool_stop_day_id != current_cal_day_id) {
+        rtc_state.last_cool_stop_day_id = current_cal_day_id;
+        if (s_tunables.cooling_mode) {
+          rtc_state.cool_start_pending = 0;
+          if (hp_on && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+            meisha_send_command("SetHeatpump", "0");
+            set_last_action_reason("cool_turn_off");
+            publish_derived_states();
+          }
+        }
+      }
+    }
+
     // Daily Heating Day reset and NVS checkpoint at heating_start_hour:00
-    int32_t current_day_id = get_heating_day_id(now, s_tunables.heating_start_hour);
-    if (local_tm.tm_hour == s_tunables.heating_start_hour && local_tm.tm_min == 0) {
+    int32_t current_day_id =
+        get_heating_day_id(now, s_tunables.heating_start_hour);
+    if (local_tm.tm_hour == s_tunables.heating_start_hour &&
+        local_tm.tm_min == 0) {
       if (rtc_state.last_reset_heating_day_id != current_day_id) {
         rtc_state.last_reset_heating_day_id = current_day_id;
         rtc_state.room_temp_snapshot = round1(rtc_state.room_temp_6h_mean);
         rtc_state.degree_hours_day = 0.0f;
         rtc_state.dhw_time = 0.0f;
 
-        float new_ambient = round2(s_tunables.room_target + (s_tunables.heating_curve_start - rtc_state.ambient_24h_mean) * s_tunables.heating_curve_angle);
-        float new_offset = clampf(s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
-        rtc_state.curve_target = round2(new_ambient + new_offset * s_tunables.heating_curve_angle);
-        rtc_state.degree_hours_target = 24.0f * (rtc_state.curve_target - s_tunables.room_target);
+        float new_ambient =
+            round2(s_tunables.room_target + (s_tunables.heating_curve_start -
+                                             rtc_state.ambient_24h_mean) *
+                                                s_tunables.heating_curve_angle);
+        float new_offset = clampf(
+            s_tunables.room_target - rtc_state.room_temp_snapshot, -2.0f, 2.0f);
+        rtc_state.curve_target =
+            round2(new_ambient + new_offset * s_tunables.heating_curve_angle);
+        rtc_state.degree_hours_target =
+            24.0f * (rtc_state.curve_target - s_tunables.room_target);
 
         // Recompute power target
-        float raw_p = fmaxf(27.0f, rtc_state.curve_target - rtc_state.pid_output);
+        float raw_p =
+            fmaxf(27.0f, rtc_state.curve_target - rtc_state.pid_output);
         int16_t lo_p = (int16_t)roundf(raw_p - 0.1f);
         int16_t hi_p = (int16_t)roundf(raw_p + 0.1f);
         if (rtc_state.power_target < 27) {
           rtc_state.power_target = (int16_t)roundf(raw_p);
         } else {
-          if (rtc_state.power_target < lo_p) rtc_state.power_target = lo_p;
-          else if (rtc_state.power_target > hi_p) rtc_state.power_target = hi_p;
+          if (rtc_state.power_target < lo_p)
+            rtc_state.power_target = lo_p;
+          else if (rtc_state.power_target > hi_p)
+            rtc_state.power_target = hi_p;
         }
 
         // Recompute schedule hours
         float d_denom = 30.0f - s_tunables.room_target;
-        rtc_state.hours_target = (fabsf(d_denom) > 1e-4f)
-                                 ? clampf((rtc_state.curve_target - s_tunables.room_target) / d_denom * 24.0f, 0.0f, 24.0f)
-                                 : 24.0f;
-        rtc_state.hours_time_left = fmaxf(0.0f, fminf(24.0f, rtc_state.hours_target + rtc_state.dhw_time) - hours_elapsed);
+        rtc_state.hours_target =
+            (fabsf(d_denom) > 1e-4f)
+                ? clampf((rtc_state.curve_target - s_tunables.room_target) /
+                             d_denom * 24.0f,
+                         0.0f, 24.0f)
+                : 24.0f;
+        rtc_state.hours_time_left = fmaxf(
+            0.0f, fminf(24.0f, rtc_state.hours_target + rtc_state.dhw_time) -
+                      hours_elapsed);
 
         // Schedule non-blocking Day Mode #1 startup after 10 seconds
         if (!s_tunables.cooling_mode) {
@@ -807,19 +946,22 @@ void meisha_loop(void) {
         rtc_state.crc32 = rtc_crc(&rtc_state);
 
         write_nvs_checkpoint();
-        publish_sensor_float("room_temp_snapshot", rtc_state.room_temp_snapshot, 1);
+        publish_sensor_float("room_temp_snapshot", rtc_state.room_temp_snapshot,
+                             1);
         publish_derived_states();
       }
     }
   }
 
   // Low-temperature DHW trigger (dhw_temp < 38.0 C for 1 minute = 60,000 ms)
-  if (dhw_temp < 38.0f && valve_state != MEISHA_VALVE_TANK && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+  if (dhw_temp < 38.0f && valve_state != MEISHA_VALVE_TANK &&
+      op_mode != MEISHA_OPMODE_DHW_ONLY) {
     if (!rtc_state.dhw_low_temp_timer_active) {
       rtc_state.dhw_low_temp_timer_active = 1;
       rtc_state.dhw_low_temp_since_ms = now_ms;
       rtc_state.dhw_low_temp_fired = 0;
-    } else if (!rtc_state.dhw_low_temp_fired && (now_ms - rtc_state.dhw_low_temp_since_ms) >= 60000UL) {
+    } else if (!rtc_state.dhw_low_temp_fired &&
+               (now_ms - rtc_state.dhw_low_temp_since_ms) >= 60000UL) {
       rtc_state.dhw_low_temp_fired = 1;
       if (dhw_temp < 45.0f && !rtc_state.dhw_start_pending) {
         dhw_start_triggered = true;
@@ -834,13 +976,16 @@ void meisha_loop(void) {
   update_change_lock_remaining(now_ms);
 
   // Day Mode #1 non-blocking execution (10 seconds after daily reset)
-  if (rtc_state.day_mode_pending && (now_ms - rtc_state.day_mode_start_ms) >= 10000UL) {
+  if (rtc_state.day_mode_pending &&
+      (now_ms - rtc_state.day_mode_start_ms) >= 10000UL) {
     rtc_state.day_mode_pending = 0;
     if (!s_tunables.cooling_mode && rtc_state.hours_time_left > 1.0f) {
-      if (valve_state != MEISHA_VALVE_TANK && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+      if (valve_state != MEISHA_VALVE_TANK &&
+          op_mode != MEISHA_OPMODE_DHW_ONLY) {
         meisha_send_command("SetOperationMode", "0");
         meisha_send_command("SetHeatpump", "1");
-        int target_sp = (rtc_state.power_target > 27) ? (int)rtc_state.power_target : 27;
+        int target_sp =
+            (rtc_state.power_target > 27) ? (int)rtc_state.power_target : 27;
         if (hp_setpoint_int < target_sp) {
           char sp_buf[16];
           snprintf(sp_buf, sizeof(sp_buf), "%d", target_sp);
@@ -853,9 +998,11 @@ void meisha_loop(void) {
   }
 
   // Turn Off non-blocking Step 2 execution (10 seconds after Step 1)
-  if (rtc_state.turn_off_pending && (now_ms - rtc_state.turn_off_start_ms) >= 10000UL) {
+  if (rtc_state.turn_off_pending &&
+      (now_ms - rtc_state.turn_off_start_ms) >= 10000UL) {
     rtc_state.turn_off_pending = 0;
-    if (!s_tunables.cooling_mode && hp_on && valve_state == MEISHA_VALVE_ROOM && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+    if (!s_tunables.cooling_mode && hp_on && valve_state == MEISHA_VALVE_ROOM &&
+        op_mode != MEISHA_OPMODE_DHW_ONLY) {
       meisha_send_command("SetHeatpump", "0");
       set_last_action_reason("idle_shutoff");
       publish_derived_states();
@@ -863,19 +1010,34 @@ void meisha_loop(void) {
   }
 
   // DHW Start non-blocking Step 2 execution (10 seconds after turning HP on)
-  if (rtc_state.dhw_start_pending && (now_ms - rtc_state.dhw_start_ms) >= 10000UL) {
+  if (rtc_state.dhw_start_pending &&
+      (now_ms - rtc_state.dhw_start_ms) >= 10000UL) {
     rtc_state.dhw_start_pending = 0;
     meisha_send_command("SetOperationMode", "3");
     set_last_action_reason("dhw_start");
     publish_derived_states();
   }
 
-  // DHW End summer non-blocking Step 2 execution (10 seconds after setting Cool only)
-  if (rtc_state.dhw_end_cool_pending && (now_ms - rtc_state.dhw_end_cool_start_ms) >= 10000UL) {
+  // DHW End summer non-blocking Step 2 execution (10 seconds after setting Cool
+  // only)
+  if (rtc_state.dhw_end_cool_pending &&
+      (now_ms - rtc_state.dhw_end_cool_start_ms) >= 10000UL) {
     rtc_state.dhw_end_cool_pending = 0;
     if (s_tunables.cooling_mode && rtc_state.ambient_24h_mean < 22.0f) {
       meisha_send_command("SetHeatpump", "0");
       set_last_action_reason("dhw_end");
+      publish_derived_states();
+    }
+  }
+
+  // Cool Turn On non-blocking Step 2 execution (10 seconds after setting Cool
+  // only)
+  if (rtc_state.cool_start_pending &&
+      (now_ms - rtc_state.cool_start_ms) >= 10000UL) {
+    rtc_state.cool_start_pending = 0;
+    if (s_tunables.cooling_mode) {
+      meisha_send_command("SetHeatpump", "1");
+      set_last_action_reason("cool_turn_on");
       publish_derived_states();
     }
   }
@@ -925,7 +1087,8 @@ void meisha_loop(void) {
       rtc_state.dhw_seen_valve_tank = 1;
       rtc_state.dhw_valve_room_timer_active = 0;
       rtc_state.dhw_end_fired = 0;
-    } else if (valve_state == MEISHA_VALVE_ROOM && rtc_state.dhw_seen_valve_tank != 0) {
+    } else if (valve_state == MEISHA_VALVE_ROOM &&
+               rtc_state.dhw_seen_valve_tank != 0) {
       if (!rtc_state.dhw_valve_room_timer_active) {
         rtc_state.dhw_valve_room_timer_active = 1;
         rtc_state.dhw_valve_room_since_ms = now_ms;
@@ -944,10 +1107,12 @@ void meisha_loop(void) {
       rtc_state.dhw_end_fired = 0;
     }
 
-    bool valve_room_15m = rtc_state.dhw_valve_room_timer_active &&
-                          ((now_ms - rtc_state.dhw_valve_room_since_ms) >= 900000UL);
-    bool comp_off_15m = rtc_state.dhw_comp_off_timer_active &&
-                        ((now_ms - rtc_state.dhw_comp_off_since_ms) >= 900000UL);
+    bool valve_room_15m =
+        rtc_state.dhw_valve_room_timer_active &&
+        ((now_ms - rtc_state.dhw_valve_room_since_ms) >= 900000UL);
+    bool comp_off_15m =
+        rtc_state.dhw_comp_off_timer_active &&
+        ((now_ms - rtc_state.dhw_comp_off_since_ms) >= 900000UL);
 
     if (!rtc_state.dhw_end_fired && (valve_room_15m || comp_off_15m)) {
       rtc_state.dhw_end_fired = 1;
@@ -980,8 +1145,9 @@ void meisha_loop(void) {
   // Space heating control (when cooling_mode == off and not in DHW only)
   if (!s_tunables.cooling_mode && op_mode != MEISHA_OPMODE_DHW_ONLY) {
     // 4-Hour Idle Shutoff (Turn Off) detection
-    // Triggers when cooling_mode == off, hp_on, valve == Room, op_mode != DHW only,
-    // and heat_pump_setpoint < 25.1 C held continuously for 4 hours (14,400,000 ms).
+    // Triggers when cooling_mode == off, hp_on, valve == Room, op_mode != DHW
+    // only, and heat_pump_setpoint < 25.1 C held continuously for 4 hours
+    // (14,400,000 ms).
     bool low_sp_cond = hp_on && (valve_state == MEISHA_VALVE_ROOM) &&
                        (op_mode != MEISHA_OPMODE_DHW_ONLY) &&
                        (hp_setpoint < 25.1f);
@@ -989,7 +1155,8 @@ void meisha_loop(void) {
       if (!rtc_state.low_setpoint_timer_active) {
         rtc_state.low_setpoint_timer_active = 1;
         rtc_state.low_setpoint_since_ms = now_ms;
-      } else if (!rtc_state.idle_shutoff_fired && (now_ms - rtc_state.low_setpoint_since_ms) >= 14400000UL) {
+      } else if (!rtc_state.idle_shutoff_fired &&
+                 (now_ms - rtc_state.low_setpoint_since_ms) >= 14400000UL) {
         rtc_state.idle_shutoff_fired = 1;
         meisha_send_command("SetOperationMode", "0");
         rtc_state.turn_off_pending = 1;
@@ -1003,11 +1170,12 @@ void meisha_loop(void) {
     }
 
     // Night Mode budget cutoff
-    // Triggers whenever cooling_mode == off, hp_on, degree_hours_day > degree_hours_target,
-    // and current hour is not within the 2-hour pre-start blackout window.
-    bool night_mode_active = hp_on &&
-                             (rtc_state.degree_hours_day > rtc_state.degree_hours_target) &&
-                             !in_pre_start_blackout;
+    // Triggers whenever cooling_mode == off, hp_on, degree_hours_day >
+    // degree_hours_target, and current hour is not within the 2-hour pre-start
+    // blackout window.
+    bool night_mode_active =
+        hp_on && (rtc_state.degree_hours_day > rtc_state.degree_hours_target) &&
+        !in_pre_start_blackout;
 
     if (night_mode_active) {
       if (hp_setpoint_int != 25 && !rtc_state.night_mode_sent) {
@@ -1022,17 +1190,19 @@ void meisha_loop(void) {
       rtc_state.night_mode_sent = 0;
     }
 
-    // Flow temperature modulation (Bonusgrad High-Temp, Bonusgrad Curve, Malusgrad)
-    // Inhibit modulation when Night Mode is active.
+    // Flow temperature modulation (Bonusgrad High-Temp, Bonusgrad Curve,
+    // Malusgrad) Inhibit modulation when Night Mode is active.
     if (!night_mode_active) {
       // 1. Bonusgrad High-Temp (Anti-Overshoot)
-      // Requires valve == Room, compressor_running == on, degree_hours_day < degree_hours_target,
-      // and z1_temp >= int(hp_setpoint) + 3 held for 1m (and a second time if still true after 1m, 2m total).
-      // Bypasses change_lock!
-      bool overshoot_cond = (valve_state == MEISHA_VALVE_ROOM) &&
-                            (rtc_state.compressor_running != 0) &&
-                            (rtc_state.degree_hours_day < rtc_state.degree_hours_target) &&
-                            (z1_temp >= (float)(hp_setpoint_int + 3));
+      // Requires valve == Room, compressor_running == on, degree_hours_day <
+      // degree_hours_target, and z1_temp >= int(hp_setpoint) + 3 held for 1m
+      // (and a second time if still true after 1m, 2m total). Bypasses
+      // change_lock!
+      bool overshoot_cond =
+          (valve_state == MEISHA_VALVE_ROOM) &&
+          (rtc_state.compressor_running != 0) &&
+          (rtc_state.degree_hours_day < rtc_state.degree_hours_target) &&
+          (z1_temp >= (float)(hp_setpoint_int + 3));
 
       if (overshoot_cond) {
         if (!rtc_state.overshoot_timer_active) {
@@ -1066,15 +1236,18 @@ void meisha_loop(void) {
         rtc_state.overshoot_steps_fired = 0;
       }
 
-      // 2. Bonusgrad Curve Ramping & 3. Malusgrad Ramping (both require change_lock expired)
+      // 2. Bonusgrad Curve Ramping & 3. Malusgrad Ramping (both require
+      // change_lock expired)
       if (!is_change_lock_active(now_ms)) {
         // Bonusgrad Curve
         if (valve_room_10m && comp_on_5m &&
             (main_outlet_temp_int + 1 > main_target_temp_int) &&
-            (rtc_state.degree_hours_day * 1.05f < rtc_state.degree_hours_target) &&
+            (rtc_state.degree_hours_day * 1.05f <
+             rtc_state.degree_hours_target) &&
             (hp_setpoint_int < (int)rtc_state.power_target)) {
           int new_sp = (hp_setpoint_int + 1 > z1_temp_int + 1)
-                       ? (hp_setpoint_int + 1) : (z1_temp_int + 1);
+                           ? (hp_setpoint_int + 1)
+                           : (z1_temp_int + 1);
           char sp_buf[16];
           snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
           meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
@@ -1088,9 +1261,11 @@ void meisha_loop(void) {
                  (main_target_temp_int > (int)rtc_state.power_target) &&
                  (hp_setpoint_int > (int)rtc_state.power_target)) {
           int stepped_down = (hp_setpoint_int - 1 < z1_temp_int - 1)
-                             ? (hp_setpoint_int - 1) : (z1_temp_int - 1);
+                                 ? (hp_setpoint_int - 1)
+                                 : (z1_temp_int - 1);
           int new_sp = (stepped_down > (int)rtc_state.power_target)
-                       ? stepped_down : (int)rtc_state.power_target;
+                           ? stepped_down
+                           : (int)rtc_state.power_target;
           char sp_buf[16];
           snprintf(sp_buf, sizeof(sp_buf), "%d", new_sp);
           meisha_send_command("SetZ1HeatRequestTemperature", sp_buf);
@@ -1099,6 +1274,36 @@ void meisha_loop(void) {
           publish_derived_states();
         }
       }
+    }
+  } else if (s_tunables.cooling_mode) {
+    // When cooling_mode == on, ensure winter heating timers and states remain
+    // cleared
+    rtc_state.low_setpoint_timer_active = 0;
+    rtc_state.idle_shutoff_fired = 0;
+    rtc_state.night_mode_sent = 0;
+    rtc_state.overshoot_timer_active = 0;
+    rtc_state.overshoot_steps_fired = 0;
+
+    // Cool Turn Off: ambient_24h < 22.0 C held continuously for 1 hour
+    // (3,600,000 ms)
+    if (rtc_state.ambient_24h_mean < 22.0f) {
+      if (!rtc_state.cool_low_ambient_timer_active) {
+        rtc_state.cool_low_ambient_timer_active = 1;
+        rtc_state.cool_low_ambient_since_ms = now_ms;
+        rtc_state.cool_low_ambient_fired = 0;
+      } else if (!rtc_state.cool_low_ambient_fired &&
+                 (now_ms - rtc_state.cool_low_ambient_since_ms) >= 3600000UL) {
+        rtc_state.cool_low_ambient_fired = 1;
+        rtc_state.cool_start_pending = 0;
+        if (hp_on && op_mode != MEISHA_OPMODE_DHW_ONLY) {
+          meisha_send_command("SetHeatpump", "0");
+          set_last_action_reason("cool_turn_off");
+          publish_derived_states();
+        }
+      }
+    } else {
+      rtc_state.cool_low_ambient_timer_active = 0;
+      rtc_state.cool_low_ambient_fired = 0;
     }
   }
 
@@ -1120,7 +1325,8 @@ void meisha_loop(void) {
 
 void meisha_mqtt_connected(void) {
   char sub_topic[160];
-  snprintf(sub_topic, sizeof(sub_topic), "%s/meisha/set/#", heishamonSettings.mqtt_topic_base);
+  snprintf(sub_topic, sizeof(sub_topic), "%s/meisha/set/#",
+           heishamonSettings.mqtt_topic_base);
   mqtt_client.subscribe(sub_topic);
 
   publish_ha_discovery();
@@ -1130,22 +1336,25 @@ void meisha_mqtt_connected(void) {
   publish_derived_states();
 }
 
-bool meisha_mqtt_callback(const char* topic, const char* topic_command, const char* msg, unsigned int length) {
+bool meisha_mqtt_callback(const char *topic, const char *topic_command,
+                          const char *msg, unsigned int length) {
   (void)topic;
   (void)length;
-  if (!topic_command || !msg) return false;
+  if (!topic_command || !msg)
+    return false;
 
-  const char* prefix = "meisha/set/";
+  const char *prefix = "meisha/set/";
   size_t prefix_len = strlen(prefix);
   if (strncmp(topic_command, prefix, prefix_len) != 0) {
     return false;
   }
 
-  const char* subtopic = topic_command + prefix_len;
+  const char *subtopic = topic_command + prefix_len;
   if (strcmp(subtopic, "control_mode") == 0) {
     MeishaControlMode new_mode;
     if (parse_mode_string(msg, &new_mode)) {
-      if (new_mode != MEISHA_MODE_OFF && (rtc_state.crash_tripped || rtc_state.crash_count > 0)) {
+      if (new_mode != MEISHA_MODE_OFF &&
+          (rtc_state.crash_tripped || rtc_state.crash_count > 0)) {
         rtc_state.crash_tripped = 0;
         rtc_state.crash_count = 0;
         rtc_state.crc32 = rtc_crc(&rtc_state);
@@ -1154,33 +1363,35 @@ bool meisha_mqtt_callback(const char* topic, const char* topic_command, const ch
       return true;
     }
   } else if (strcmp(subtopic, "room_target") == 0) {
-    char* endptr = nullptr;
+    char *endptr = nullptr;
     float val = strtof(msg, &endptr);
     if (endptr != msg) {
       return meisha_set_room_target(val);
     }
   } else if (strcmp(subtopic, "heating_curve_start") == 0) {
-    char* endptr = nullptr;
+    char *endptr = nullptr;
     float val = strtof(msg, &endptr);
     if (endptr != msg) {
       return meisha_set_heating_curve_start(val);
     }
   } else if (strcmp(subtopic, "heating_curve_angle") == 0) {
-    char* endptr = nullptr;
+    char *endptr = nullptr;
     float val = strtof(msg, &endptr);
     if (endptr != msg) {
       return meisha_set_heating_curve_angle(val);
     }
   } else if (strcmp(subtopic, "heating_start_hour") == 0) {
-    char* endptr = nullptr;
+    char *endptr = nullptr;
     long val = strtol(msg, &endptr, 10);
     if (endptr != msg && val >= 0 && val <= 23) {
       return meisha_set_heating_start_hour((uint8_t)val);
     }
   } else if (strcmp(subtopic, "cooling_mode") == 0) {
-    if (strcasecmp(msg, "on") == 0 || strcmp(msg, "1") == 0 || strcasecmp(msg, "true") == 0) {
+    if (strcasecmp(msg, "on") == 0 || strcmp(msg, "1") == 0 ||
+        strcasecmp(msg, "true") == 0) {
       return meisha_set_cooling_mode(true);
-    } else if (strcasecmp(msg, "off") == 0 || strcmp(msg, "0") == 0 || strcasecmp(msg, "false") == 0) {
+    } else if (strcasecmp(msg, "off") == 0 || strcmp(msg, "0") == 0 ||
+               strcasecmp(msg, "false") == 0) {
       return meisha_set_cooling_mode(false);
     }
   }
@@ -1188,41 +1399,25 @@ bool meisha_mqtt_callback(const char* topic, const char* topic_command, const ch
   return false;
 }
 
-float meisha_get_curve_target(void) {
-  return rtc_state.curve_target;
-}
+float meisha_get_curve_target(void) { return rtc_state.curve_target; }
 
-float meisha_get_pid_output(void) {
-  return rtc_state.pid_output;
-}
+float meisha_get_pid_output(void) { return rtc_state.pid_output; }
 
-int meisha_get_power_target(void) {
-  return (int)rtc_state.power_target;
-}
+int meisha_get_power_target(void) { return (int)rtc_state.power_target; }
 
-float meisha_get_room_delta(void) {
-  return rtc_state.room_delta;
-}
+float meisha_get_room_delta(void) { return rtc_state.room_delta; }
 
-float meisha_get_degree_hours_day(void) {
-  return rtc_state.degree_hours_day;
-}
+float meisha_get_degree_hours_day(void) { return rtc_state.degree_hours_day; }
 
 float meisha_get_degree_hours_target(void) {
   return rtc_state.degree_hours_target;
 }
 
-float meisha_get_dhw_time(void) {
-  return rtc_state.dhw_time;
-}
+float meisha_get_dhw_time(void) { return rtc_state.dhw_time; }
 
-float meisha_get_hours_target(void) {
-  return rtc_state.hours_target;
-}
+float meisha_get_hours_target(void) { return rtc_state.hours_target; }
 
-float meisha_get_hours_time_left(void) {
-  return rtc_state.hours_time_left;
-}
+float meisha_get_hours_time_left(void) { return rtc_state.hours_time_left; }
 
 bool meisha_get_compressor_running(void) {
   return rtc_state.compressor_running != 0;
@@ -1232,6 +1427,6 @@ float meisha_get_change_lock_remaining_min(void) {
   return rtc_state.change_lock_remaining_min;
 }
 
-const char* meisha_get_last_action_reason(void) {
+const char *meisha_get_last_action_reason(void) {
   return rtc_state.last_action_reason;
 }

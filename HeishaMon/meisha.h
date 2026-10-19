@@ -1,8 +1,8 @@
 #pragma once
 
-#include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifndef MEISHA_ENTITY_PREFIX
 #define MEISHA_ENTITY_PREFIX "meisha_esp_"
@@ -41,7 +41,8 @@ struct MeishaNvsCheckpoint {
 };
 
 #if defined(__cplusplus)
-static_assert(sizeof(MeishaNvsCheckpoint) == 32, "MeishaNvsCheckpoint must be exactly 32 bytes");
+static_assert(sizeof(MeishaNvsCheckpoint) == 32,
+              "MeishaNvsCheckpoint must be exactly 32 bytes");
 #endif
 
 struct MeishaRtcState {
@@ -101,9 +102,14 @@ struct MeishaRtcState {
   uint8_t dhw_comp_off_timer_active;
   uint8_t dhw_end_fired;
   uint8_t dhw_end_cool_pending;
-  uint16_t timer_reserved_pad;
+  uint8_t cool_start_pending;
+  uint8_t cool_low_ambient_timer_active;
+  uint8_t cool_low_ambient_fired;
+  uint8_t timer_reserved_pad[2];
 
   int32_t last_dhw_schedule_day_id;
+  int32_t last_cool_start_day_id;
+  int32_t last_cool_stop_day_id;
 
   uint32_t valve_room_since_ms;
   uint32_t comp_on_since_ms;
@@ -118,6 +124,8 @@ struct MeishaRtcState {
   uint32_t dhw_valve_room_since_ms;
   uint32_t dhw_comp_off_since_ms;
   uint32_t dhw_end_cool_start_ms;
+  uint32_t cool_start_ms;
+  uint32_t cool_low_ambient_since_ms;
 
   float change_lock_remaining_min;
   char last_action_reason[32];
@@ -132,12 +140,13 @@ extern "C" {
 void meisha_setup(void);
 void meisha_loop(void);
 void meisha_mqtt_connected(void);
-bool meisha_mqtt_callback(const char* topic, const char* topic_command, const char* msg, unsigned int length);
+bool meisha_mqtt_callback(const char *topic, const char *topic_command,
+                          const char *msg, unsigned int length);
 
 MeishaControlMode meisha_get_control_mode(void);
 void meisha_set_control_mode(MeishaControlMode mode);
-bool meisha_send_command(const char* cmd, const char* value);
-const MeishaRtcState* meisha_get_rtc_state(void);
+bool meisha_send_command(const char *cmd, const char *value);
+const MeishaRtcState *meisha_get_rtc_state(void);
 
 MeishaTunables meisha_get_tunables(void);
 bool meisha_set_room_target(float val);
@@ -162,7 +171,7 @@ float meisha_get_hours_target(void);
 float meisha_get_hours_time_left(void);
 bool meisha_get_compressor_running(void);
 float meisha_get_change_lock_remaining_min(void);
-const char* meisha_get_last_action_reason(void);
+const char *meisha_get_last_action_reason(void);
 
 #ifdef __cplusplus
 }
